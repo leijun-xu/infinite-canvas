@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, LoaderCircle, Plus, SlidersHorizontal, Sparkles, Trash2, Upload, VideoIcon } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, LoaderCircle, Plus, Send, SlidersHorizontal, Sparkles, Trash2, Upload, VideoIcon } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
 import { App, Button, Checkbox, Drawer, Empty, Input, Modal, Tag, Typography } from "antd";
 import localforage from "localforage";
@@ -7,10 +7,12 @@ import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
+import { SendToCanvasDialog, type CanvasNodeDraft } from "@/components/canvas/send-to-canvas-dialog";
 import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue, videoModeLabel, videoSizeLabel } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { clampVideoSeconds } from "@/lib/media-size";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { deleteStoredMedia, resolveMediaUrl } from "@/services/file-storage";
@@ -21,6 +23,7 @@ import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import { boolConfig, modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { ReferenceImage } from "@/types/image";
+import { CanvasNodeType } from "@/types/canvas";
 import i18n from "@/i18n";
 
 type GeneratedVideo = {
@@ -39,6 +42,7 @@ type GenerationResult = {
     status: "pending" | "success" | "failed";
     video?: GeneratedVideo;
     error?: string;
+    context?: VideoGenerationContext;
 };
 
 type GenerationLog = {
@@ -61,6 +65,7 @@ type GenerationLog = {
 };
 
 type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vquality" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoMode">;
+type VideoGenerationContext = { id: string; text: string; config: AiConfig; references: ReferenceImage[] };
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
@@ -94,6 +99,7 @@ export default function VideoPage() {
     const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+    const [canvasDrafts, setCanvasDrafts] = useState<CanvasNodeDraft[] | null>(null);
     const [referenceDragTarget, setReferenceDragTarget] = useState(false);
     const [autoRunToken, setAutoRunToken] = useState(0);
     const videoCommand = useWorkbenchAgentStore((state) => state.videoCommand);
@@ -204,6 +210,7 @@ export default function VideoPage() {
         processedCommandRef.current = videoCommand.nonce;
         clearVideoCommand();
         if (typeof videoCommand.prompt === "string") setPrompt(videoCommand.prompt);
+        if (videoCommand.references) setReferences(videoCommand.references);
         if (videoCommand.run && running) {
             if (videoCommand.taskId) updateAgentTask(videoCommand.taskId, { status: "failed", error: t("videoWorkbench.busy") });
             return;
@@ -231,7 +238,7 @@ export default function VideoPage() {
             openConfigDialog(true);
             return null;
         }
-        return { text, config: buildVideoConfig(effectiveConfig, model), references: [...references] };
+        return { id: nanoid(), text, config: buildVideoConfig(effectiveConfig, model), references: [...references] };
     };
 
     const retryResult = () => {
@@ -263,6 +270,36 @@ export default function VideoPage() {
             setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }].slice(0, 7));
         }
         setAssetPickerOpen(false);
+    };
+
+    const canvasDraftFor = (result: GenerationResult): CanvasNodeDraft => {
+        const video = result.video!;
+        const context = result.context!;
+        return {
+              type: CanvasNodeType.Video,
+              title: t("videoWorkbench.resultTitle"),
+              generationId: context.id,
+              references: context.references,
+              ...fitNodeSize(video.width || 1280, video.height || 720, 420, 420),
+              metadata: {
+                  content: video.url,
+                  storageKey: video.storageKey,
+                  status: "success",
+                  naturalWidth: video.width,
+                  naturalHeight: video.height,
+                  bytes: video.bytes,
+                  mimeType: video.mimeType,
+                  durationMs: video.durationMs,
+                  prompt: context.text,
+                  model: context.config.model,
+                  size: context.config.size,
+                  seconds: context.config.videoSeconds,
+                  vquality: context.config.vquality,
+                  generateAudio: context.config.videoGenerateAudio,
+                  watermark: context.config.videoWatermark,
+                  videoMode: context.config.videoMode,
+              },
+          };
     };
 
     const createSession = () => {
@@ -329,7 +366,8 @@ export default function VideoPage() {
                         bytes: stored.bytes,
                         mimeType: stored.mimeType,
                     };
-                    setResults([{ id: nextVideo.id, status: "success", video: nextVideo }]);
+                    const context = { id: log.id, text: log.prompt, config: configOverride || taskConfig, references: log.references || [] };
+                    setResults([{ id: nextVideo.id, status: "success", video: nextVideo, context }]);
                     if (agentTaskId) updateAgentTask(agentTaskId, { status: "succeeded", successCount: 1, failCount: 0, error: undefined });
                     await saveLog({ ...log, status: "success", durationMs: nextVideo.durationMs, video: nextVideo, error: undefined });
                     message.success(t("videoWorkbench.generated"));
@@ -366,7 +404,8 @@ export default function VideoPage() {
         if (log.config.videoGenerateAudio) updateConfig("videoGenerateAudio", log.config.videoGenerateAudio);
         if (log.config.videoWatermark) updateConfig("videoWatermark", log.config.videoWatermark);
         if (log.config.videoMode) updateConfig("videoMode", log.config.videoMode);
-        setResults(log.status === "pending" ? [{ id: log.id, status: "pending" }] : log.video ? [{ id: log.video.id, status: "success", video: log.video }] : [{ id: log.id, status: "failed", error: log.error || t("workbench.generationFailed") }]);
+        const context = { id: log.id, text: log.prompt, config: { ...effectiveConfig, ...log.config, model: log.model }, references: log.references || [] };
+        setResults(log.status === "pending" ? [{ id: log.id, status: "pending" }] : log.video ? [{ id: log.video.id, status: "success", video: log.video, context }] : [{ id: log.id, status: "failed", error: log.error || t("workbench.generationFailed") }]);
     };
 
     return (
@@ -470,7 +509,7 @@ export default function VideoPage() {
                         </div>
                         {results.length ? (
                             <div className="grid gap-4">
-                                {results.map((result) => (result.status === "success" && result.video ? <ResultVideoCard key={result.id} video={result.video} onDownload={downloadVideo} onSaveAsset={saveResultToAssets} /> : result.status === "failed" ? <FailedVideoCard key={result.id} error={result.error || t("workbench.generationFailed")} onRetry={retryResult} /> : <PendingVideoCard key={result.id} />))}
+                                {results.map((result) => (result.status === "success" && result.video ? <ResultVideoCard key={result.id} video={result.video} onDownload={downloadVideo} onSaveAsset={saveResultToAssets} onSendToCanvas={() => setCanvasDrafts([canvasDraftFor(result)])} /> : result.status === "failed" ? <FailedVideoCard key={result.id} error={result.error || t("workbench.generationFailed")} onRetry={retryResult} /> : <PendingVideoCard key={result.id} />))}
                             </div>
                         ) : (
                             <div className="flex min-h-[320px] flex-col items-center justify-center rounded-lg border border-dashed border-stone-300 text-center dark:border-stone-700 lg:min-h-[560px]">
@@ -505,6 +544,7 @@ export default function VideoPage() {
             <Modal title={t("workbench.deleteLogs")} open={deleteConfirmOpen} onCancel={() => setDeleteConfirmOpen(false)} onOk={deleteSelectedLogs} okText={t("common.delete")} okButtonProps={{ danger: true }} cancelText={t("common.cancel")}>
                 {t("workbench.deleteLogsConfirm", { count: selectedLogIds.length })}
             </Modal>
+            <SendToCanvasDialog drafts={canvasDrafts} onClose={() => setCanvasDrafts(null)} />
         </div>
     );
 }
@@ -526,7 +566,7 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog }: {
     );
 }
 
-function ResultVideoCard({ video, onDownload, onSaveAsset }: { video: GeneratedVideo; onDownload: (video: GeneratedVideo) => void; onSaveAsset: (video: GeneratedVideo) => void }) {
+function ResultVideoCard({ video, onDownload, onSaveAsset, onSendToCanvas }: { video: GeneratedVideo; onDownload: (video: GeneratedVideo) => void; onSaveAsset: (video: GeneratedVideo) => void; onSendToCanvas: (video: GeneratedVideo) => void }) {
     const { t } = useTranslation();
     return (
         <div className="overflow-hidden rounded-lg border border-stone-200 bg-background dark:border-stone-800">
@@ -545,6 +585,9 @@ function ResultVideoCard({ video, onDownload, onSaveAsset }: { video: GeneratedV
                     </Button>
                     <Button size="small" icon={<Download className="size-3.5" />} onClick={() => onDownload(video)}>
                         {t("common.download")}
+                    </Button>
+                    <Button size="small" icon={<Send className="size-3.5" />} onClick={() => onSendToCanvas(video)}>
+                        {t("canvas.sendResult.action")}
                     </Button>
                 </div>
             </div>

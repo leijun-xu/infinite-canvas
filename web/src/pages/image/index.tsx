@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, Send, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { App, Button, Checkbox, Drawer, Empty, Image, Input, Modal, Tag, Tooltip, Typography } from "antd";
 import localforage from "localforage";
@@ -9,7 +9,9 @@ import { ImageSettingsPanel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
+import { SendToCanvasDialog, type CanvasNodeDraft } from "@/components/canvas/send-to-canvas-dialog";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -20,6 +22,7 @@ import { deleteStoredImages, ensureImagePreview, getImagePreviewRevision, previe
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import type { ReferenceImage } from "@/types/image";
+import { CanvasNodeType } from "@/types/canvas";
 import i18n from "@/i18n";
 
 type GeneratedImage = {
@@ -38,6 +41,7 @@ type GenerationResult = {
     status: "pending" | "success" | "failed";
     image?: GeneratedImage;
     error?: string;
+    context?: ImageGenerationContext;
 };
 
 type GenerationLog = {
@@ -59,7 +63,8 @@ type GenerationLog = {
     images: GeneratedImage[];
 };
 
-type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "size" | "count">;
+type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "size" | "count" | "background">;
+type ImageGenerationContext = { id: string; text: string; config: AiConfig; references: ReferenceImage[] };
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
@@ -93,6 +98,8 @@ export default function ImagePage() {
     const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+    const [canvasDrafts, setCanvasDrafts] = useState<CanvasNodeDraft[] | null>(null);
+    const [selectedResultIds, setSelectedResultIds] = useState<string[]>([]);
     const [isReferenceDragActive, setIsReferenceDragActive] = useState(false);
     const [autoRunToken, setAutoRunToken] = useState(0);
     const imageCommand = useWorkbenchAgentStore((state) => state.imageCommand);
@@ -168,6 +175,7 @@ export default function ImagePage() {
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: t("imageWorkbench.invalidParams") });
             return;
         }
+        setSelectedResultIds([]);
 
         setElapsedMs(0);
         setRunning(true);
@@ -213,6 +221,7 @@ export default function ImagePage() {
         processedCommandRef.current = imageCommand.nonce;
         clearImageCommand();
         if (typeof imageCommand.prompt === "string") setPrompt(imageCommand.prompt);
+        if (imageCommand.references) setReferences(imageCommand.references);
         if (imageCommand.run && running) {
             if (imageCommand.taskId) updateAgentTask(imageCommand.taskId, { status: "failed", error: t("imageWorkbench.busy") });
             return;
@@ -265,6 +274,35 @@ export default function ImagePage() {
         setAssetPickerOpen(false);
     };
 
+    const canvasDraftFor = (result: GenerationResult, index: number): CanvasNodeDraft => {
+        const image = result.image!;
+        const context = result.context!;
+        return {
+              type: CanvasNodeType.Image,
+              title: t("imageWorkbench.resultTitle", { count: index + 1 }),
+              generationId: context.id,
+              references: context.references,
+              ...fitNodeSize(image.width, image.height, 340, 240),
+              metadata: {
+                  content: image.dataUrl,
+                  storageKey: image.storageKey,
+                  status: "success",
+                  naturalWidth: image.width,
+                  naturalHeight: image.height,
+                  bytes: image.bytes,
+                  mimeType: image.mimeType || "image/png",
+                  prompt: context.text,
+                  generationType: context.references.length ? "edit" : "generation",
+                  model: context.config.model,
+                  size: context.config.size,
+                  quality: context.config.quality,
+                  background: context.config.background,
+                  count: 1,
+              },
+          };
+    };
+    const successfulResults = results.filter((result) => result.status === "success" && result.image);
+
     const createSession = () => {
         setPrompt("");
         setReferences([]);
@@ -273,6 +311,7 @@ export default function ImagePage() {
         setStartedAt(0);
         setSelectedLogIds([]);
         setPreviewLog(null);
+        setSelectedResultIds([]);
     };
 
     const deleteSelectedLogs = () => {
@@ -301,7 +340,10 @@ export default function ImagePage() {
         if (log.config.quality) updateConfig("quality", log.config.quality);
         if (log.config.size) updateConfig("size", log.config.size);
         if (log.config.count) updateConfig("count", log.config.count);
-        setResults(log.images.map((image) => ({ id: image.id, status: "success", image })));
+        updateConfig("background", log.config.background);
+        const context = { id: log.id, text: log.prompt, config: { ...effectiveConfig, ...log.config, model: log.model }, references: log.references || [] };
+        setSelectedResultIds([]);
+        setResults(log.images.map((image) => ({ id: image.id, status: "success", image, context })));
     };
 
     const buildRequestSnapshot = () => {
@@ -315,10 +357,10 @@ export default function ImagePage() {
             openConfigDialog(true);
             return null;
         }
-        return { text, config: { ...effectiveConfig, model, count: "1" }, references: [...references] };
+        return { id: nanoid(), text, config: { ...effectiveConfig, model, count: "1" }, references: [...references] };
     };
 
-    const runGenerationSlot = async (index: number, snapshot: { text: string; config: AiConfig; references: ReferenceImage[] }) => {
+    const runGenerationSlot = async (index: number, snapshot: ImageGenerationContext) => {
         const itemStartedAt = performance.now();
         try {
             const result = snapshot.references.length ? await requestEdit(snapshot.config, snapshot.text, snapshot.references) : await requestGeneration(snapshot.config, snapshot.text);
@@ -326,7 +368,7 @@ export default function ImagePage() {
             if (!image) throw new Error(t("imageWorkbench.missingResult"));
             const stored = await uploadImage(image.dataUrl);
             const nextImage: GeneratedImage = { id: image.id, dataUrl: stored.url, ...(stored.storageKey ? { storageKey: stored.storageKey } : {}), durationMs: performance.now() - itemStartedAt, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
-            setResults((value) => updateResultAt(value, index, { status: "success", image: nextImage }));
+            setResults((value) => updateResultAt(value, index, { status: "success", image: nextImage, context: snapshot }));
             return nextImage;
         } catch (error) {
             setResults((value) => updateResultAt(value, index, { status: "failed", error: error instanceof Error ? error.message : t("workbench.generationFailed") }));
@@ -495,13 +537,19 @@ export default function ImagePage() {
                             <div>
                                 <h2 className="text-xl font-semibold">{t("workbench.results")}</h2>
                             </div>
-                            {running ? <Tag className="m-0 px-2 py-1">{t("workbench.waiting", { time: formatDuration(elapsedMs) })}</Tag> : null}
+                            <div className="flex flex-wrap items-center gap-2">
+                                {successfulResults.length > 1 ? <><Checkbox checked={selectedResultIds.length === successfulResults.length} indeterminate={selectedResultIds.length > 0 && selectedResultIds.length < successfulResults.length} onChange={(event) => setSelectedResultIds(event.target.checked ? successfulResults.map((result) => result.id) : [])}>{t("canvas.sendResult.selectAll")}</Checkbox><Button type="text" size="small" disabled={!selectedResultIds.length} icon={<Send className="size-3.5" />} onClick={() => setCanvasDrafts(results.flatMap((result, index) => selectedResultIds.includes(result.id) && result.status === "success" && result.image ? [canvasDraftFor(result, index)] : []))}>{t("canvas.sendResult.sendSelected", { count: selectedResultIds.length })}</Button></> : null}
+                                {running ? <Tag className="m-0 px-2 py-1">{t("workbench.waiting", { time: formatDuration(elapsedMs) })}</Tag> : null}
+                            </div>
                         </div>
                         {results.length ? (
                             <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
                                 {results.map((result, index) =>
                                     result.status === "success" && result.image ? (
-                                        <ResultImageCard key={result.id} image={result.image} index={index} onEdit={addResultToReferences} onDownload={downloadImage} onSaveAsset={saveResultToAssets} />
+                                        <div key={result.id} className="relative">
+                                            {successfulResults.length > 1 ? <Checkbox className="absolute left-2 top-2 z-10" aria-label={t("imageWorkbench.resultTitle", { count: index + 1 })} checked={selectedResultIds.includes(result.id)} onChange={(event) => setSelectedResultIds((ids) => event.target.checked ? [...ids, result.id] : ids.filter((id) => id !== result.id))} /> : null}
+                                            <ResultImageCard image={result.image} index={index} onEdit={addResultToReferences} onDownload={downloadImage} onSaveAsset={saveResultToAssets} onSendToCanvas={() => setCanvasDrafts([canvasDraftFor(result, index)])} />
+                                        </div>
                                     ) : result.status === "failed" ? (
                                         <FailedImageCard key={result.id} error={result.error || t("workbench.generationFailed")} onRetry={() => retryResult(index)} />
                                     ) : (
@@ -550,6 +598,7 @@ export default function ImagePage() {
             <Modal title={t("workbench.deleteLogs")} open={deleteConfirmOpen} onCancel={() => setDeleteConfirmOpen(false)} onOk={deleteSelectedLogs} okText={t("common.delete")} okButtonProps={{ danger: true }} cancelText={t("common.cancel")}>
                 {t("workbench.deleteLogsConfirm", { count: selectedLogIds.length })}
             </Modal>
+            <SendToCanvasDialog drafts={canvasDrafts} onClose={() => setCanvasDrafts(null)} />
         </div>
     );
 }
@@ -577,12 +626,14 @@ function ResultImageCard({
     onEdit,
     onDownload,
     onSaveAsset,
+    onSendToCanvas,
 }: {
     image: GeneratedImage;
     index: number;
     onEdit: (image: GeneratedImage, index: number) => void;
     onDownload: (image: GeneratedImage, index: number) => void;
     onSaveAsset: (image: GeneratedImage, index: number) => void;
+    onSendToCanvas: (image: GeneratedImage, index: number) => void;
 }) {
     const { t } = useTranslation();
     useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision);
@@ -597,7 +648,7 @@ function ResultImageCard({
                     <span>{formatBytes(image.bytes)}</span>
                     <span>{formatDuration(image.durationMs)}</span>
                 </div>
-                <div className="grid min-w-0 grid-cols-3 gap-2">
+                <div className="grid min-w-0 grid-cols-2 gap-2">
                     <Tooltip title={t("common.addToAssets")}>
                         <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => void onSaveAsset(image, index)}>
                             {t("common.addToAssets")}
@@ -611,6 +662,11 @@ function ResultImageCard({
                     <Tooltip title={t("common.download")}>
                         <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<Download className="size-3.5" />} onClick={() => onDownload(image, index)}>
                             {t("common.download")}
+                        </Button>
+                    </Tooltip>
+                    <Tooltip title={t("canvas.sendResult.action")}>
+                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<Send className="size-3.5" />} onClick={() => onSendToCanvas(image, index)}>
+                            {t("canvas.sendResult.action")}
                         </Button>
                     </Tooltip>
                 </div>
@@ -832,6 +888,7 @@ function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
         quality: log.config?.quality || log.quality || "",
         size: log.config?.size || log.size || "",
         count: log.config?.count || String(log.imageCount || log.successCount || 1),
+        background: log.config?.background || "",
     };
 }
 
@@ -880,6 +937,7 @@ function buildLog({
         quality: config.quality,
         size: config.size,
         count: config.count,
+        background: config.background,
     };
     return {
         id: nanoid(),

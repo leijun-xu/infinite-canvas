@@ -2,6 +2,7 @@ import { Copy, FileText, FolderPlus } from "lucide-react";
 import { Button, Modal, Space, Tag } from "antd";
 import { useTranslation } from "react-i18next";
 
+import { PromptUseButton } from "@/components/prompts/prompt-use-button";
 import { formatPromptDate, type Prompt } from "@/services/api/prompts";
 
 export function PromptDetailDialog({ prompt, onClose, onCopy, onSaveAsset }: { prompt: Prompt | null; onClose: () => void; onCopy: (prompt: string) => void; onSaveAsset?: (prompt: Prompt) => void }) {
@@ -30,7 +31,8 @@ export function PromptDetailDialog({ prompt, onClose, onCopy, onSaveAsset }: { p
                     </div>
                     <div className="shrink-0 pt-4">
                         <Space wrap>
-                            <Button type="primary" icon={<Copy className="size-4" />} onClick={() => onCopy(prompt.prompt)}>
+                            <PromptUseButton prompt={prompt.prompt} referenceImageUrls={prompt.referenceImageUrls} onUsed={onClose} />
+                            <Button icon={<Copy className="size-4" />} onClick={() => onCopy(prompt.prompt)}>
                                 {t("common.copyPrompt")}
                             </Button>
                             {onSaveAsset ? (

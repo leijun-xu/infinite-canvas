@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { ReferenceImage } from "@/types/image";
 
 // The Agent panel dispatches commands through this store to set workbench prompts and optionally start generation.
 // The panel writes model, quality, size, count, and other options to use-config-store, which workbench pages read directly.
@@ -8,6 +9,7 @@ export type WorkbenchCommand = {
     nonce: number;
     taskId?: string;
     prompt?: string;
+    references?: ReferenceImage[];
     run: boolean;
 };
 

@@ -1,6 +1,6 @@
 import { Copy, FileText } from "lucide-react";
 import type { ReactNode } from "react";
-import { Button, Card, Tag } from "antd";
+import { Button, Card, Tag, Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
 
 import { formatPromptDate, type Prompt } from "@/services/api/prompts";
@@ -45,7 +45,7 @@ export function PromptCard({
                     {!compact ? <><p className="mt-2 line-clamp-3 text-xs leading-5 text-stone-600 dark:text-stone-400">{item.description || item.prompt}</p><div className="mt-3 flex flex-wrap gap-1.5">{item.tags.map((tag) => <Tag key={tag} className="m-0 text-[11px]">{tag}</Tag>)}</div></> : null}
                 </div>
             </button>
-            {!compact ? <div className="mt-auto flex items-center gap-2 px-4 pb-4"><Button block={actionType === "primary"} type={actionType} size="small" icon={actionIcon} onClick={onCopy}>{actionLabel || t("common.copy")}</Button>{extraAction}</div> : null}
+            {!compact ? <div className="mt-auto flex items-center gap-2 px-4 pb-4">{extraAction}<Tooltip title={extraAction ? actionLabel || t("common.copy") : undefined}><Button block={!extraAction && actionType === "primary"} type={actionType} size="small" aria-label={actionLabel || t("common.copy")} icon={actionIcon} onClick={onCopy}>{extraAction ? null : actionLabel || t("common.copy")}</Button></Tooltip></div> : null}
         </Card>
     );
 }
