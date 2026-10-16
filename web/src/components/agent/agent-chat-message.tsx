@@ -1,6 +1,6 @@
 import { useEffect, useId, useState, type ReactNode } from "react";
 import { App, Button, Image, Modal, Popover } from "antd";
-import { Brain, CheckCircle2, ChevronDown, ChevronRight, Circle, CircleAlert, Copy, ExternalLink, FilePenLine, FileText, FolderOpen, ListChecks, LoaderCircle, Search, ShieldAlert, TerminalSquare, Wrench, XCircle } from "lucide-react";
+import { Bot, Brain, CheckCircle2, ChevronDown, ChevronRight, Circle, CircleAlert, Copy, ExternalLink, FilePenLine, FileText, FolderOpen, ListChecks, LoaderCircle, Search, ShieldAlert, TerminalSquare, UserRound, Wrench, XCircle } from "lucide-react";
 import { Streamdown, type LinkSafetyModalProps } from "streamdown";
 import { useTranslation } from "react-i18next";
 
@@ -103,6 +103,7 @@ export type AgentChatMessageItem = {
 };
 
 export function AgentChatMessage({ item, theme, onRejectTool, onApproveTool }: { item: AgentChatMessageItem; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; onRejectTool?: (id: string) => void; onApproveTool?: (id: string) => void }) {
+    const { t } = useTranslation();
     const isUser = item.role === "user";
     const isSystem = item.role === "system";
     const color = item.role === "error" ? "#dc2626" : item.role === "tool" ? "#2563eb" : theme.node.text;
@@ -123,16 +124,38 @@ export function AgentChatMessage({ item, theme, onRejectTool, onApproveTool }: {
     return (
         <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
             <div
-                className={isUser ? "min-w-0 max-w-[82%] py-1 text-right text-sm leading-6" : "min-w-0 w-full text-left text-sm leading-6"}
+                className={isUser ? "min-w-0 max-w-[82%]" : "min-w-0 w-full"}
                 style={{ color }}
             >
-                {isUser ? (
-                    <AgentUserMessageContent text={item.text} references={item.canvasReferences || []} skill={item.skill} theme={theme} />
-                ) : (
-                    <Streamdown {...streamdownProps()} animated={streamdownAnimation} isAnimating={!!item.streamId}>{item.text}</Streamdown>
-                )}
-                {item.attachments?.length ? <AgentMessageAttachments attachments={item.attachments} alignRight={isUser} /> : null}
-                {item.meta ? <div className={`mt-1 text-[11px] tabular-nums opacity-55 ${isUser ? "text-right" : ""}`}>{item.meta}</div> : null}
+                <div className={`mb-1.5 flex items-center gap-1.5 px-1 text-[11px] font-medium leading-4 ${isUser ? "justify-end" : ""}`} style={{ color: theme.node.muted }}>
+                    {isUser ? (
+                        <>
+                            <span>{t("agent.message.you")}</span>
+                            <UserRound className="size-3.5" />
+                        </>
+                    ) : (
+                        <>
+                            <span className="grid size-5 place-items-center rounded-md border" style={{ background: theme.toolbar.panel, borderColor: theme.node.stroke }}>
+                                <Bot className="size-3.5" />
+                            </span>
+                            <span>{item.title || t("agent.message.codex")}</span>
+                        </>
+                    )}
+                </div>
+                <div
+                    className={isUser
+                        ? "rounded-lg border px-3 py-2.5 text-left text-sm leading-6"
+                        : "pl-7 pr-1 text-left text-sm leading-6"}
+                    style={isUser ? { background: theme.node.fill, borderColor: theme.node.stroke } : undefined}
+                >
+                    {isUser ? (
+                        <AgentUserMessageContent text={item.text} references={item.canvasReferences || []} skill={item.skill} theme={theme} />
+                    ) : (
+                        <Streamdown {...streamdownProps()} animated={streamdownAnimation} isAnimating={!!item.streamId}>{item.text}</Streamdown>
+                    )}
+                    {item.attachments?.length ? <AgentMessageAttachments attachments={item.attachments} alignRight={isUser} /> : null}
+                    {item.meta ? <div className={`mt-1 text-[11px] tabular-nums opacity-55 ${isUser ? "text-right" : ""}`}>{item.meta}</div> : null}
+                </div>
             </div>
         </div>
     );

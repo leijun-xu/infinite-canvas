@@ -148,6 +148,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     const imageBorderColor = isActive ? selectionBlue : isRelated ? theme.node.muted : "transparent";
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const titleInputRef = useRef<HTMLInputElement>(null);
+    const nodeElementRef = useRef<HTMLDivElement>(null);
     const resizeRef = useRef({
         isResizing: false,
         corner: "bottom-right" as ResizeCorner,
@@ -157,6 +158,10 @@ export const CanvasNode = React.memo(function CanvasNode({
         startTop: 0,
         startWidth: 0,
         startHeight: 0,
+        width: 0,
+        height: 0,
+        left: 0,
+        top: 0,
         keepRatio: false,
         ratio: 1,
     });
@@ -253,20 +258,33 @@ export const CanvasNode = React.memo(function CanvasNode({
                 }
             }
 
-            onResize(data.id, width, height, {
-                x: fromLeft ? startRight - width : resizeRef.current.startLeft,
-                y: fromTop ? startBottom - height : resizeRef.current.startTop,
-            });
+            const left = fromLeft ? startRight - width : resizeRef.current.startLeft;
+            const top = fromTop ? startBottom - height : resizeRef.current.startTop;
+            resizeRef.current.width = width;
+            resizeRef.current.height = height;
+            resizeRef.current.left = left;
+            resizeRef.current.top = top;
+            const nodeElement = nodeElementRef.current;
+            if (nodeElement) {
+                nodeElement.style.width = `${width}px`;
+                nodeElement.style.height = `${height}px`;
+                nodeElement.style.transform = `translate(${left}px, ${top}px)`;
+            }
         },
-        [data.id, onResize, scale],
+        [scale],
     );
 
     const handleResizeUp = useCallback(() => {
+        if (!resizeRef.current.isResizing) return;
         resizeRef.current.isResizing = false;
         window.removeEventListener("mousemove", handleResizeMove);
         window.removeEventListener("mouseup", handleResizeUp);
+        onResize(data.id, resizeRef.current.width, resizeRef.current.height, {
+            x: resizeRef.current.left,
+            y: resizeRef.current.top,
+        });
         onResizeEnd(data.id);
-    }, [data.id, handleResizeMove, onResizeEnd]);
+    }, [data.id, handleResizeMove, onResize, onResizeEnd]);
 
     const handleResizeMouseDown = (event: React.MouseEvent, corner: ResizeCorner) => {
         event.stopPropagation();
@@ -281,6 +299,10 @@ export const CanvasNode = React.memo(function CanvasNode({
             startTop: data.position.y,
             startWidth: data.width,
             startHeight: data.height,
+            width: data.width,
+            height: data.height,
+            left: data.position.x,
+            top: data.position.y,
             keepRatio: (data.type === CanvasNodeType.Image && !data.metadata?.freeResize) || data.type === CanvasNodeType.Video || Boolean(definition?.keepAspectRatio?.(data)),
             ratio: (data.metadata?.naturalWidth || data.width) / (data.metadata?.naturalHeight || data.height || 1),
         };
@@ -297,6 +319,7 @@ export const CanvasNode = React.memo(function CanvasNode({
 
     return (
         <div
+            ref={nodeElementRef}
             data-node-id={data.id}
             className={`node-element group/node absolute flex select-none flex-col transition-shadow duration-200 ${isGroup ? "z-[5]" : isSelected ? "z-50" : "z-10"} ${referenceSelectionState === "available" ? "cursor-pointer" : referenceSelectionState ? "cursor-not-allowed" : ""}`}
             style={{

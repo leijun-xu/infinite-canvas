@@ -1,6 +1,6 @@
 import { useRef, useState, type ReactNode } from "react";
-import { Button, Dropdown, Tooltip } from "antd";
-import { ArrowUp, Check, ChevronUp, Cpu, Gauge, Hand, ImagePlus, LoaderCircle, RefreshCw, ShieldAlert, ShieldCheck, ShieldOff, Square, X } from "lucide-react";
+import { Button, Dropdown, Image, Tooltip } from "antd";
+import { ArrowUp, Check, ChevronDown, ChevronUp, Hand, ImagePlus, LoaderCircle, RefreshCw, ShieldAlert, ShieldCheck, ShieldOff, Square, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
@@ -56,6 +56,7 @@ export function AgentChatComposer({
 }) {
     const { t } = useTranslation();
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const [previewUrl, setPreviewUrl] = useState<string | null>(null);
     const canvasReferences = useAgentStore((state) => state.canvasReferences);
     const canSubmit = !disabled && !sending && Boolean(prompt.trim() || attachments.length || canvasReferences.length);
     return (
@@ -65,14 +66,21 @@ export function AgentChatComposer({
                     <div className="thin-scrollbar mb-2 flex gap-2 overflow-x-auto pb-1">
                         {attachments.map((item) => (
                             <div key={item.id} className="group relative size-14 shrink-0 overflow-hidden rounded-xl border" style={{ borderColor: theme.node.stroke }} title={item.name}>
-                                <img src={item.url} alt={item.name} className="size-full object-cover" />
+                                <button type="button" className="size-full cursor-zoom-in" onClick={() => setPreviewUrl(item.url)} aria-label={`${t("agent.message.viewLarge")}: ${item.name}`}>
+                                    <img src={item.url} alt={item.name} className="size-full object-cover" draggable={false} />
+                                </button>
                                 {onRemoveAttachment ? (
-                                    <button type="button" className="absolute right-1 top-1 grid size-5 place-items-center rounded-full border opacity-0 shadow-sm transition group-hover:opacity-100" style={{ background: theme.toolbar.panel, borderColor: theme.node.stroke, color: theme.node.text }} onClick={() => onRemoveAttachment(item.id)} aria-label={t("agent.composer.removeImage")}>
+                                    <button type="button" className="absolute right-1 top-1 z-10 grid size-5 place-items-center rounded-full border opacity-0 shadow-sm transition group-hover:opacity-100" style={{ background: theme.toolbar.panel, borderColor: theme.node.stroke, color: theme.node.text }} onClick={() => onRemoveAttachment(item.id)} aria-label={t("agent.composer.removeImage")}>
                                         <X className="size-3" />
                                     </button>
                                 ) : null}
                             </div>
                         ))}
+                    </div>
+                ) : null}
+                {previewUrl ? (
+                    <div className="hidden">
+                        <Image src={previewUrl} alt={t("agent.message.attachmentPreview")} preview={{ visible: true, src: previewUrl, onVisibleChange: (visible) => !visible && setPreviewUrl(null) }} />
                     </div>
                 ) : null}
                 <AgentChatPromptInput value={prompt} disabled={disabled || sending} placeholder={placeholder} theme={theme} onChange={onPromptChange} onSubmit={() => { if (canSubmit) void onSubmit(); }} onAddFiles={onAddFiles} />
@@ -114,14 +122,12 @@ function AgentModelControls({ models, model, reasoningEffort, onModelChange, onR
     const [modelOpen, setModelOpen] = useState(false);
     const [reasoningOpen, setReasoningOpen] = useState(false);
     return (
-        <div className="flex min-w-0 items-center gap-1">
+        <div className="flex h-9 min-w-0 max-w-56 items-center rounded-lg transition hover:bg-black/5 dark:hover:bg-white/10">
             <Tooltip title={t("agent.composer.model", { model: current.displayName || current.model })} placement="top" open={modelOpen ? false : undefined}>
-                <span className="inline-flex shrink-0">
+                <span className="inline-flex min-w-0">
                     <Select value={model} open={modelOpen} onOpenChange={setModelOpen} onValueChange={onModelChange}>
-                        <SelectTrigger hideChevron className="h-9 w-9 min-w-9 justify-center gap-0 rounded-full border-0 bg-transparent px-0 text-xs font-medium shadow-none hover:bg-black/5 focus:ring-0 @min-[660px]:w-auto @min-[660px]:min-w-36 @min-[660px]:max-w-36 @min-[660px]:justify-start @min-[660px]:gap-1.5 @min-[660px]:px-2.5 dark:bg-transparent dark:hover:bg-white/10" aria-label={t("agent.composer.selectModel", { model: current.displayName || current.model })}>
-                            <Cpu className="size-3.5 shrink-0 opacity-70" />
-                            <span className="hidden min-w-0 flex-1 truncate text-left @min-[660px]:inline">{current.displayName || current.model}</span>
-                            <ChevronUp className="hidden size-3 opacity-50 @min-[660px]:block" />
+                        <SelectTrigger hideChevron className="h-9 min-w-0 max-w-36 justify-start rounded-lg border-0 bg-transparent px-2.5 text-sm font-medium shadow-none hover:bg-transparent focus:ring-0 dark:bg-transparent dark:hover:bg-transparent" aria-label={t("agent.composer.selectModel", { model: current.displayName || current.model })}>
+                            <span className="min-w-0 truncate text-left">{current.displayName || current.model}</span>
                         </SelectTrigger>
                         <SelectContent data-canvas-no-zoom position="popper" side="top" align="start" sideOffset={6} className="z-[1200] w-64 rounded-xl border border-border/70 bg-popover p-1 shadow-xl">
                             {models.map((item) => <SelectItem key={item.model} value={item.model}>{item.displayName || item.model}</SelectItem>)}
@@ -132,10 +138,9 @@ function AgentModelControls({ models, model, reasoningEffort, onModelChange, onR
             <Tooltip title={t("agent.composer.reasoning", { effort: effortLabel(reasoningEffort) })} placement="top" open={reasoningOpen ? false : undefined}>
                 <span className="inline-flex shrink-0">
                     <Select value={reasoningEffort} open={reasoningOpen} onOpenChange={setReasoningOpen} onValueChange={(value) => onReasoningEffortChange(value as AgentReasoningEffort)}>
-                        <SelectTrigger hideChevron className="h-9 w-9 min-w-9 justify-center gap-0 rounded-full border-0 bg-transparent px-0 text-xs font-medium shadow-none hover:bg-black/5 focus:ring-0 @min-[660px]:w-auto @min-[660px]:min-w-[4.5rem] @min-[660px]:justify-start @min-[660px]:gap-1.5 @min-[660px]:px-2.5 dark:bg-transparent dark:hover:bg-white/10" aria-label={t("agent.composer.selectReasoning", { effort: effortLabel(reasoningEffort) })}>
-                            <Gauge className="size-3.5 opacity-70" />
-                            <span className="hidden @min-[660px]:inline">{effortLabel(reasoningEffort)}</span>
-                            <ChevronUp className="hidden size-3 opacity-50 @min-[660px]:block" />
+                        <SelectTrigger hideChevron className="h-9 w-auto min-w-0 justify-start gap-1 rounded-lg border-0 bg-transparent py-0 pl-0 pr-2.5 text-sm font-normal shadow-none hover:bg-transparent focus:ring-0 dark:bg-transparent dark:hover:bg-transparent" aria-label={t("agent.composer.selectReasoning", { effort: effortLabel(reasoningEffort) })}>
+                            <span className="opacity-45">{effortLabel(reasoningEffort)}</span>
+                            <ChevronDown className="size-3 shrink-0 opacity-50" />
                         </SelectTrigger>
                         <SelectContent data-canvas-no-zoom position="popper" side="top" align="start" sideOffset={6} className="z-[1200] min-w-32 rounded-xl border border-border/70 bg-popover p-1 shadow-xl">
                             {current.supportedReasoningEfforts.map((item) => <SelectItem key={item.reasoningEffort} value={item.reasoningEffort}>{effortLabel(item.reasoningEffort)}</SelectItem>)}

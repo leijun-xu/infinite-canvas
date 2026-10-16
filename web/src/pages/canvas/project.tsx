@@ -804,6 +804,7 @@ function InfiniteCanvasPage() {
         connections,
         selectedNodeIds,
         viewport,
+        isNodeResizing,
         nodesRef,
         connectionsRef,
         selectedNodeIdsRef,

@@ -9,6 +9,8 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasNodeData, ViewportTransform } from "@/types/canvas";
 
 const SELECTION_PAD = 14;
+const NODE_TITLE_OFFSET = 28;
+const TOOLBAR_TITLE_GAP = 8;
 
 export function CanvasSelectionToolbar({
     nodes,
@@ -59,7 +61,7 @@ export function CanvasSelectionToolbar({
             {showActions ? (
                 <div
                     className="absolute z-[70] flex h-12 -translate-x-1/2 -translate-y-full items-center overflow-visible rounded-[18px] border border-black/10 bg-white text-[15px] text-[#242529] shadow-[0_8px_28px_rgba(15,23,42,.12)]"
-                    style={{ left: left + width / 2, top: top - 8 }}
+                    style={{ left: left + width / 2, top: top + SELECTION_PAD - NODE_TITLE_OFFSET * viewport.k - TOOLBAR_TITLE_GAP }}
                     onMouseDown={(event) => event.stopPropagation()}
                     onPointerDown={(event) => event.stopPropagation()}
                 >

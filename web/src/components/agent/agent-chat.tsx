@@ -78,7 +78,7 @@ export function AgentChatTimeline({
     return (
         <div className="relative min-h-0 flex-1">
             <div ref={listRef} className="thin-scrollbar h-full select-text overflow-y-auto" onScroll={updateScrollState}>
-                <div ref={contentRef} className="space-y-4 px-4 pt-4">
+                <div ref={contentRef} className="space-y-5 px-4 pb-2 pt-5">
                     {timeline.map((entry) => entry.type === "commands"
                         ? <AgentCommandGroupRow key={entry.id} items={entry.items} theme={theme} />
                         : <AgentChatMessageRow key={entry.item.id} item={entry.item} theme={theme} />)}
