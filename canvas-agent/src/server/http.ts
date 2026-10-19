@@ -103,7 +103,9 @@ export function startHttpServer() {
     };
     const app = express();
     app.disable("x-powered-by");
+    /** 解析 JSON 请求体，并允许单次携带图片附件等较大的 Agent 输入。 */
     app.use(express.json({ limit: "30mb" }));
+    /** 在 Debug 模式下记录需要关注的 HTTP 请求耗时和响应状态。 */
     app.use((req, res, next) => {
         if (!logger.enabled) return next();
         const startedAt = Date.now();
@@ -114,33 +116,42 @@ export function startHttpServer() {
         });
         next();
     });
+    /** 处理跨域访问和预检请求，并拦截不在来源白名单中的网页。 */
     app.use((req, res, next) => {
         const url = requestUrl(req, config);
         if (!setCors(req, res, url, config)) return void res.status(403).json({ ok: false, error: "origin not allowed" });
         if (req.method === "OPTIONS") return void res.json({});
         next();
     });
+    /** 返回 Agent 服务、Codex 运行状态和当前连接概况，用于健康检查。 */
     app.get("/health", (_req, res) => res.json(session.health()));
+    /** 返回网页建立连接所需的公开配置，不暴露真实连接 token。 */
     app.get("/config", (_req, res) => res.json({ ok: true, protocolVersion: AGENT_PROTOCOL_VERSION, url: config.url, hasToken: true }));
+    /** 校验除公开接口外所有请求携带的连接 token。 */
     app.use((req, res, next) => {
         if (validToken(req, requestUrl(req, config), config.token)) return next();
         res.status(401).json({ ok: false, error: "invalid token" });
     });
+    /** 建立 SSE 长连接，向网页持续推送 Agent 状态、消息和工具调用事件。 */
     app.get("/events", (req, res) => {
         session.openEvents(requestUrl(req, config), res, ensureSiteWorkspace(config).activeThreadId || "");
     });
+    /** 接收指定网页上报的最新画布快照，供 Agent 读取画布状态。 */
     app.post("/canvas/state", (req, res) => {
         session.updateState(req.body, String(req.query.clientId || "") || undefined);
         res.json({ ok: true });
     });
+    /** 将指定网页标记为最近激活的画布，作为后续工具调用的默认目标。 */
     app.post("/canvas/activate", (req, res) => {
         session.activateClient(String(req.query.clientId || ""));
         res.json({ ok: true });
     });
+    /** 接收网页执行画布工具后的结果，并唤醒等待中的 MCP 工具调用。 */
     app.post("/canvas/result", (req, res) => {
         const ok = session.resolveResult(String(req.query.clientId || ""), req.body);
         res.status(ok ? 200 : 409).json({ ok });
     });
+    /** 返回当前 Agent turn 中上传的临时图片附件，仅允许所属网页读取。 */
     app.get("/agent/attachments/:attachmentId", route(async (req, res) => {
         const attachment = session.getTurnAttachment(String(req.query.clientId || ""), routeParam(req.params.attachmentId));
         const data = attachment.dataUrl.split(",", 2)[1];
@@ -148,12 +159,14 @@ export function startHttpServer() {
         res.setHeader("Cache-Control", "no-store");
         res.type(attachment.type).send(Buffer.from(data, "base64"));
     }));
+    /** 返回消息元数据中持久化的附件资源，供历史消息恢复本地预览。 */
     app.get("/agent/message-assets/:messageKey/:assetFile", route(async (req, res) => {
         const asset = await messageMetadataStore.readAsset(routeParam(req.params.messageKey), routeParam(req.params.assetFile));
         if (!asset) return void res.status(404).json({ ok: false, error: "message asset not found" });
         res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
         res.type(asset.contentType).send(asset.data);
     }));
+    /** 调用操作系统文件管理器定位指定的本地文件或目录。 */
     app.post("/agent/local-file/reveal", route(async (req, res) => {
         const filePath = String(req.body?.path || "");
         if (!path.isAbsolute(filePath)) return res.status(400).json({ ok: false, error: "文件路径必须是绝对路径" });
@@ -161,6 +174,7 @@ export function startHttpServer() {
         await revealLocalFile(filePath, file.isDirectory());
         res.json({ ok: true });
     }));
+    /** 读取指定绝对路径的本地图片，供网页安全预览 Agent 生成的图片文件。 */
     app.post("/agent/local-image", route(async (req, res) => {
         const filePath = String(req.body?.path || "");
         if (!path.isAbsolute(filePath) || !/\.(?:avif|gif|jpe?g|png|webp)$/i.test(filePath)) return res.status(400).json({ ok: false, error: "图片路径无效" });
@@ -169,17 +183,22 @@ export function startHttpServer() {
         res.setHeader("Cache-Control", "no-store");
         res.type(path.extname(filePath)).send(await readFile(filePath));
     }));
+    /** 接收 MCP Server 转发的工具调用，并读取画布状态或将写操作派发给网页。 */
     app.post("/api/tools", route(async (req, res) => res.json({ ok: true, result: await session.callTool(req.body?.name, req.body?.input || {}) })));
+    /** 返回当前 Codex 工作空间、活跃线程和会话状态。 */
     app.get("/agent/codex/workspace", (_req, res) => {
         const workspace = ensureSiteWorkspace(config);
         res.json({ ok: true, workspace, conversation: session.conversationStateSnapshot });
     });
+    /** 查询 Codex 当前支持的模型及其推理强度配置。 */
     app.get("/agent/codex/models", route(async (_req, res) => res.json({ ok: true, ...(await listCodexModels(emit)) })));
+    /** 查询当前工作空间可用的 Codex Skills，并标记由本项目管理的 Skill。 */
     app.get("/agent/codex/skills", route(async (req, res) => {
         const workspace = ensureSiteWorkspace(config);
         const result = await listCodexSkills(emit, workspace.workspacePath, String(req.query.forceReload || "") === "1");
         res.json({ ok: true, data: result.skills.map((skill) => ({ ...skill, managed: skillStore.isManagedPath(skill.path) })), errors: result.errors });
     }));
+    /** 从当前对话或画布快照中提炼可保存的 Skill 草稿。 */
     app.post("/agent/codex/skills/draft", codexMutation(async (req, res) => {
         const workspace = ensureSiteWorkspace(config);
         const source = String(req.body?.source || "");
@@ -213,14 +232,17 @@ export function startHttpServer() {
             session.setCodexState(previousCodexState, { preserveReplay: true });
         }
     }));
+    /** 读取指定名称的项目托管 Skill 内容和版本信息。 */
     app.get("/agent/codex/skills/:name", route(async (req, res) => {
         res.json({ ok: true, data: await skillStore.get(routeParam(req.params.name)) });
     }));
+    /** 在当前工作空间创建新的项目托管 Skill。 */
     app.post("/agent/codex/skills", codexMutation(async (req, res) => {
         const data = await skillStore.create(req.body);
         session.emitAll("skills_changed", { forceReload: true });
         res.status(201).json({ ok: true, data });
     }));
+    /** 启用或停用指定 Skill，并同步更新 Codex 的有效 Skill 配置。 */
     app.post("/agent/codex/skills/:name/enabled", codexMutation(async (req, res) => {
         if (typeof req.body?.enabled !== "boolean") return res.status(400).json({ ok: false, error: "Skill 启用状态无效" });
         const workspace = ensureSiteWorkspace(config);
@@ -230,21 +252,25 @@ export function startHttpServer() {
         session.emitAll("skills_changed", { forceReload: true });
         res.json({ ok: true, data });
     }));
+    /** 按预期版本删除指定的项目托管 Skill，避免覆盖并发修改。 */
     app.post("/agent/codex/skills/:name/delete", codexMutation(async (req, res) => {
         await skillStore.delete(routeParam(req.params.name), String(req.body?.expectedRevision || ""));
         session.emitAll("skills_changed", { forceReload: true });
         res.json({ ok: true });
     }));
+    /** 更新指定的项目托管 Skill，并通知所有网页刷新 Skill 列表。 */
     app.post("/agent/codex/skills/:name", codexMutation(async (req, res) => {
         const data = await skillStore.update(routeParam(req.params.name), req.body);
         session.emitAll("skills_changed", { forceReload: true });
         res.json({ ok: true, data });
     }));
+    /** 查询当前工作空间的 Codex 历史线程，支持按关键词搜索。 */
     app.get("/agent/codex/threads", route(async (req, res) => {
         const workspace = ensureSiteWorkspace(config);
         const result = await listCodexThreads(emit, { cwd: workspace.workspacePath, searchTerm: String(req.query.searchTerm || "") });
         res.json({ ok: true, workspace, conversation: session.conversationStateSnapshot, ...result });
     }));
+    /** 创建并预热一个新的 Codex 空白线程，返回初始线程信息。 */
     app.post("/agent/codex/threads/new", codexMutation(async (req, res) => {
         const clientId = String(req.body?.clientId || "");
         session.beginConversation({ sourceClientId: clientId });
@@ -252,6 +278,7 @@ export function startHttpServer() {
         const thread = await prepareDraftThread(clientId, permissionMode(req.body?.permissionMode));
         res.json({ ok: true, workspace: ensureSiteWorkspace(config), conversation: session.conversationStateSnapshot, thread: summarizeCodexThread(thread), messages: [] });
     }));
+    /** 清空当前会话状态并在后台准备新的 Codex 空白线程。 */
     app.post("/agent/codex/threads/reset", codexMutation(async (req, res) => {
         const clientId = String(req.body?.clientId || "");
         session.beginConversation({ sourceClientId: clientId });
@@ -259,17 +286,20 @@ export function startHttpServer() {
         await prepareDraftThread(clientId, permissionMode(req.body?.permissionMode));
         res.json({ ok: true, workspace: ensureSiteWorkspace(config), conversation: session.conversationStateSnapshot });
     }));
+    /** 读取指定 Codex 线程的摘要、历史消息和已完成 Turn。 */
     app.get("/agent/codex/threads/:threadId", route(async (req, res) => {
         const workspace = ensureSiteWorkspace(config);
         const threadId = routeParam(req.params.threadId);
         res.json({ ok: true, workspace, conversation: session.conversationStateSnapshot, ...(await readCodexThread(emit, threadId, workspace.workspacePath)) });
     }));
+    /** 确认前端已获得指定 Turn 的权威历史，以清理对应断线重放缓存。 */
     app.post("/agent/codex/history/ack", (req, res) => {
         const threadId = String(req.body?.threadId || "");
         const turnIds = Array.isArray(req.body?.turnIds) ? req.body.turnIds.map(String) : [];
         session.acknowledgeCodexHistory(threadId, turnIds);
         res.json({ ok: true });
     });
+    /** 恢复并切换到指定 Codex 线程，同时返回完整历史消息。 */
     app.post("/agent/codex/threads/:threadId/resume", codexMutation(async (req, res) => {
         const threadId = routeParam(req.params.threadId);
         const clientId = String(req.body?.clientId || "");
@@ -282,6 +312,7 @@ export function startHttpServer() {
             throw error;
         }
     }));
+    /** 归档指定 Codex 线程；删除当前线程时同时清空活跃会话。 */
     app.post("/agent/codex/threads/:threadId/delete", codexMutation(async (req, res) => {
         const workspace = ensureSiteWorkspace(config);
         const threadId = routeParam(req.params.threadId);
@@ -289,6 +320,7 @@ export function startHttpServer() {
         const nextWorkspace = setActiveThread(workspace.activeThreadId === threadId ? "" : workspace.activeThreadId || "", { sourceClientId: String(req.body?.clientId || "") });
         res.json({ ok: true, workspace: nextWorkspace, conversation: session.conversationStateSnapshot });
     }));
+    /** 向当前 Codex 线程提交一轮任务，并异步推送回复、审批和工具事件。 */
     app.post("/agent/codex/turn", codexMutation(async (req, res) => {
         const attachments = Array.isArray(req.body?.attachments) ? (req.body.attachments as AgentAttachment[]) : [];
         const workspace = ensureSiteWorkspace(config);
@@ -410,21 +442,26 @@ export function startHttpServer() {
             }
         });
     }
+    /** 提交 Codex 命令或文件操作的审批决定。 */
     app.post("/agent/codex/approval", route(async (req, res) => {
         const decision = String(req.body?.decision || "");
         if (!["accept", "acceptForSession", "decline", "cancel"].includes(decision)) return res.status(400).json({ ok: false, error: "无效的审批决定" });
         const ok = await resolveCodexApproval(String(req.body?.requestId || ""), decision);
         res.status(ok ? 200 : 409).json({ ok, ...(ok ? {} : { error: "审批请求已失效" }) });
     }));
+    /** 中断当前运行中的 Codex Turn 或 Skill 草稿生成任务。 */
     app.post("/agent/codex/interrupt", route(async (req, res) => {
         const ok = await interruptCodexTurn(skillDraftRunning ? undefined : String(req.body?.threadId || ""));
         res.status(ok ? 200 : 409).json({ ok, ...(ok ? {} : { error: "当前没有可停止的任务" }) });
     }));
+    /** 向本机 Claude Code 适配器提交一轮任务，并通过统一事件流返回结果。 */
     app.post("/agent/claude/turn", (req, res) => {
         runClaudeTurn(String(req.body?.prompt || ""), emit);
         res.json({ ok: true });
     });
+    /** 为未匹配到的接口返回统一的 404 响应。 */
     app.use((_req, res) => res.status(404).json({ ok: false, error: "not found" }));
+    /** 将路由异常转换为统一 JSON 错误响应，并保留 Skill 错误状态码。 */
     app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
         logger.error("HTTP request failed", { method: req.method, path: req.path, error });
         if (error instanceof SkillStoreError || error instanceof CodexSkillLookupError) return void res.status(error.statusCode).json({ ok: false, error: error.message });
