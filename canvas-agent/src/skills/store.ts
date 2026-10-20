@@ -4,6 +4,7 @@ import path from "node:path";
 
 import matter from "gray-matter";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { createFileManifest, type GitHubSkillOrigin, type GitHubSkillRecord, type GitHubSkillSources, GitHubSkillError, manifestRevision, readGitHubSkillSources, stageGitHubSkill, writeGitHubSkillSources } from "./github.js";
 
 const NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MAX_NAME_LENGTH = 64;
@@ -28,7 +29,11 @@ export type ManagedSkillDetail = {
     path: string;
     revision: string;
     managed: true;
+    editable: boolean;
+    origin?: GitHubSkillOrigin;
 };
+
+export type SkillManagement = { managed: boolean; editable: boolean; origin?: GitHubSkillOrigin };
 
 export type CreateManagedSkillInput = {
     name: string;
@@ -64,11 +69,13 @@ export class SkillStoreError extends Error {
 export class SkillStore {
     readonly workspacePath: string;
     readonly skillsPath: string;
+    readonly sourcesFile: string;
     private writeQueue: Promise<unknown> = Promise.resolve();
 
     constructor(workspacePath: string) {
         this.workspacePath = path.resolve(workspacePath);
         this.skillsPath = path.join(this.workspacePath, ".agents", "skills");
+        this.sourcesFile = path.join(this.workspacePath, ".agents", "skill-sources.json");
     }
 
     /** 判断 Codex 返回的绝对路径是否属于本 Store 的标准 Skill 入口。 */
@@ -79,12 +86,29 @@ export class SkillStore {
         return segments.length === 2 && validName(segments[0]) && segments[1].toLowerCase() === "skill.md";
     }
 
-    /** 读取一个可编辑 Skill 的正文与界面元数据。 */
+    /** 返回 Codex Skill 的管理能力和 GitHub 来源。 */
+    async managementForPaths(filePaths: string[]): Promise<SkillManagement[]> {
+        try {
+            await this.writeQueue.catch(() => undefined);
+            const sources = await readGitHubSkillSources(this.sourcesFile);
+            return filePaths.map((filePath) => {
+                if (!this.isManagedPath(filePath)) return { managed: false, editable: false };
+                const name = path.basename(path.dirname(filePath));
+                const record = sources[name];
+                return record ? { managed: true, editable: false, origin: publicOrigin(record) } : { managed: true, editable: true };
+            });
+        } catch (error) {
+            throw storeError(error, "读取 Skill 来源失败");
+        }
+    }
+
+    /** 读取一个项目托管 Skill 的正文、来源与版本信息。 */
     async get(name: string): Promise<ManagedSkillDetail> {
         try {
             await this.writeQueue.catch(() => undefined);
             const paths = await this.safeExistingPaths(name);
-            return await this.readDetail(name, paths.skillFile, paths.openAiFile);
+            const source = (await readGitHubSkillSources(this.sourcesFile))[name];
+            return await this.readDetail(name, paths.skillFile, paths.openAiFile, source);
         } catch (error) {
             throw storeError(error, "读取 Skill 失败");
         }
@@ -104,6 +128,7 @@ export class SkillStore {
                 if (existing.isSymbolicLink()) throw new SkillStoreError("Skill 目录不能是符号链接或目录联接", 400);
                 throw new SkillStoreError("同名 Skill 已存在", 409);
             }
+            if ((await readGitHubSkillSources(this.sourcesFile))[name]) throw new SkillStoreError("Skill 来源清单中已存在同名记录，请先检查本地文件", 409);
             await fs.mkdir(skillDir);
             try {
                 const skillFile = path.join(skillDir, "SKILL.md");
@@ -122,6 +147,7 @@ export class SkillStore {
     update(nameValue: string, input: UpdateManagedSkillInput) {
         return this.mutate(async () => {
             const name = skillName(nameValue);
+            if ((await readGitHubSkillSources(this.sourcesFile))[name]) throw new SkillStoreError("从 GitHub 导入的 Skill 不能直接编辑，请使用更新操作", 409);
             const description = skillDescription(input?.description);
             const instructions = skillInstructions(input?.instructions);
             const expectedRevision = expectedRevisionValue(input?.expectedRevision);
@@ -153,6 +179,14 @@ export class SkillStore {
             const name = skillName(nameValue);
             const expectedRevision = expectedRevisionValue(expectedRevisionValueInput);
             const paths = await this.safeExistingPaths(name);
+            const sources = await readGitHubSkillSources(this.sourcesFile);
+            const source = sources[name];
+            if (source) {
+                const currentManifest = await createFileManifest(paths.skillDir);
+                assertRevision(expectedRevision, manifestRevision(currentManifest));
+                await this.replaceImportedDirectory(name, paths.skillDir, sources, undefined);
+                return;
+            }
             const currentSkill = await readSkill(paths.skillFile, name);
             const currentOpenAi = await readOpenAi(paths.openAiFile, name);
             assertRevision(expectedRevision, revision(currentSkill.raw, currentOpenAi.raw));
@@ -161,6 +195,54 @@ export class SkillStore {
             const realSkill = await fs.realpath(paths.skillDir);
             if (!inside(realRoot, realSkill)) throw new SkillStoreError("Skill 路径不安全", 400);
             await fs.rm(realSkill, { recursive: true });
+        });
+    }
+
+    /** 从 GitHub 仓库导入一个只读 Skill。 */
+    importFromGitHub(source: unknown) {
+        return this.mutate(async () => {
+            await this.ensureRoot();
+            const staged = await stageGitHubSkill(source, path.join(this.workspacePath, ".agents"));
+            const stagingRoot = path.dirname(staged.directory);
+            try {
+                const destination = path.join(this.skillsPath, staged.name);
+                if (await lstatOptional(destination)) throw new SkillStoreError("同名 Skill 已存在", 409);
+                const sources = await readGitHubSkillSources(this.sourcesFile);
+                if (sources[staged.name]) throw new SkillStoreError("Skill 来源清单中已存在同名记录，请先检查本地文件", 409);
+                await fs.rename(staged.directory, destination);
+                try {
+                    if (!sameManifest(await createFileManifest(destination), staged.manifest)) throw new SkillStoreError("Skill 安装校验失败", 500);
+                    await writeGitHubSkillSources(this.sourcesFile, { ...sources, [staged.name]: { ...staged.origin, manifest: staged.manifest } });
+                } catch (error) {
+                    await fs.rm(destination, { recursive: true, force: true });
+                    throw error;
+                }
+                return await this.readDetail(staged.name, path.join(destination, "SKILL.md"), path.join(destination, "agents", "openai.yaml"), { ...staged.origin, manifest: staged.manifest });
+            } finally {
+                await fs.rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined);
+            }
+        });
+    }
+
+    /** 从原 GitHub 地址重新下载并替换未被本地修改的 Skill。 */
+    updateFromGitHub(nameValue: string) {
+        return this.mutate(async () => {
+            const name = skillName(nameValue);
+            const paths = await this.safeExistingPaths(name);
+            const sources = await readGitHubSkillSources(this.sourcesFile);
+            const source = sources[name];
+            if (!source) throw new SkillStoreError("该 Skill 不是从 GitHub 导入的", 409);
+            if (!sameManifest(await createFileManifest(paths.skillDir), source.manifest)) throw new SkillStoreError("Skill 文件已在本地修改，为避免覆盖已取消更新", 409);
+            const staged = await stageGitHubSkill(source.source, path.join(this.workspacePath, ".agents"));
+            const stagingRoot = path.dirname(staged.directory);
+            try {
+                if (staged.name !== name) throw new SkillStoreError("GitHub Skill 名称已变化，无法直接更新", 409);
+                const nextSources = { ...sources, [name]: { ...staged.origin, manifest: staged.manifest } };
+                await this.replaceImportedDirectory(name, paths.skillDir, nextSources, staged.directory, staged.manifest);
+                return await this.readDetail(name, paths.skillFile, paths.openAiFile, nextSources[name]);
+            } finally {
+                await fs.rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined);
+            }
         });
     }
 
@@ -221,7 +303,22 @@ export class SkillStore {
         if (!inside(realWorkspace, realRoot)) throw new SkillStoreError("Skill 根目录不安全", 400);
     }
 
-    private async readDetail(name: string, skillFile: string, openAiFile: string): Promise<ManagedSkillDetail> {
+    private async readDetail(name: string, skillFile: string, openAiFile: string, source?: GitHubSkillRecord): Promise<ManagedSkillDetail> {
+        if (source) {
+            const skill = await readImportedSkill(skillFile, name);
+            const skillInterface = await readImportedOpenAi(openAiFile);
+            return {
+                name,
+                description: skill.description,
+                instructions: skill.instructions,
+                ...(skillInterface ? { interface: skillInterface } : {}),
+                path: skillFile,
+                revision: manifestRevision(await createFileManifest(path.dirname(skillFile))),
+                managed: true,
+                editable: false,
+                origin: publicOrigin(source),
+            };
+        }
         const skill = await readSkill(skillFile, name);
         const openAi = await readOpenAi(openAiFile, name);
         return {
@@ -232,7 +329,27 @@ export class SkillStore {
             path: skillFile,
             revision: revision(skill.raw, openAi.raw),
             managed: true,
+            editable: true,
         };
+    }
+
+    private async replaceImportedDirectory(name: string, currentDirectory: string, sources: GitHubSkillSources, replacement?: string, expectedManifest?: Record<string, string>) {
+        await assertTreeHasNoLinks(currentDirectory);
+        const agentsPath = path.join(this.workspacePath, ".agents");
+        const backup = path.join(agentsPath, `.skill-backup-${name}-${crypto.randomUUID()}`);
+        await fs.rename(currentDirectory, backup);
+        try {
+            if (replacement) await fs.rename(replacement, currentDirectory);
+            if (expectedManifest && !sameManifest(await createFileManifest(currentDirectory), expectedManifest)) throw new SkillStoreError("Skill 安装校验失败", 500);
+            const nextSources = { ...sources };
+            if (!replacement) delete nextSources[name];
+            await writeGitHubSkillSources(this.sourcesFile, nextSources);
+        } catch (error) {
+            if (replacement) await fs.rm(currentDirectory, { recursive: true, force: true }).catch(() => undefined);
+            await fs.rename(backup, currentDirectory).catch(() => undefined);
+            throw error;
+        }
+        await fs.rm(backup, { recursive: true, force: true }).catch(() => undefined);
     }
 
     private async writeOpenAi(filePath: string, current: Record<string, unknown>, skillInterface?: ManagedSkillInterface) {
@@ -338,6 +455,37 @@ async function readSkill(filePath: string, expectedName: string): Promise<SkillD
     };
 }
 
+async function readImportedSkill(filePath: string, expectedName: string) {
+    const raw = await fs.readFile(filePath, "utf8");
+    let parsed: matter.GrayMatterFile<string>;
+    try {
+        parsed = matter(raw);
+    } catch {
+        throw new SkillStoreError("SKILL.md frontmatter 格式无效", 409);
+    }
+    if (parsed.data?.name !== expectedName) throw new SkillStoreError("SKILL.md 中的名称与目录不一致", 409);
+    const description = typeof parsed.data?.description === "string" ? parsed.data.description.trim() : "";
+    const instructions = parsed.content.trim();
+    if (!description || !instructions) throw new SkillStoreError("SKILL.md 内容无效", 409);
+    return { description, instructions };
+}
+
+async function readImportedOpenAi(filePath: string): Promise<ManagedSkillInterface | undefined> {
+    const entry = await lstatOptional(filePath);
+    if (!entry) return undefined;
+    let parsed: unknown;
+    try {
+        parsed = parseYaml(await fs.readFile(filePath, "utf8"));
+    } catch {
+        throw new SkillStoreError("agents/openai.yaml 格式无效", 409);
+    }
+    const value = recordValue(recordValue(parsed).interface);
+    const displayName = typeof value.display_name === "string" ? value.display_name : undefined;
+    const shortDescription = typeof value.short_description === "string" ? value.short_description : undefined;
+    const defaultPrompt = typeof value.default_prompt === "string" ? value.default_prompt : undefined;
+    return displayName || shortDescription || defaultPrompt ? { displayName, shortDescription, defaultPrompt } : undefined;
+}
+
 async function readOpenAi(filePath: string, expectedName: string): Promise<OpenAiDocument> {
     const entry = await lstatOptional(filePath);
     if (!entry) return { raw: "", data: {} };
@@ -433,7 +581,19 @@ function nodeErrorCode(error: unknown) {
 
 function storeError(error: unknown, fallback: string) {
     if (error instanceof SkillStoreError) return error;
+    if (error instanceof GitHubSkillError) return new SkillStoreError(error.message, error.statusCode);
     if (nodeErrorCode(error) === "ENOENT") return new SkillStoreError("找不到指定 Skill", 404);
     if (["EEXIST", "ENOTEMPTY", "EPERM", "EACCES"].includes(nodeErrorCode(error))) return new SkillStoreError("Skill 文件当前无法修改", 409);
     return new SkillStoreError(fallback, 500);
+}
+
+function publicOrigin(source: GitHubSkillRecord): GitHubSkillOrigin {
+    const { manifest: _manifest, ...origin } = source;
+    return origin;
+}
+
+function sameManifest(left: Record<string, string>, right: Record<string, string>) {
+    const leftEntries = Object.entries(left);
+    const rightEntries = Object.entries(right);
+    return leftEntries.length === rightEntries.length && leftEntries.every(([file, hash]) => right[file] === hash);
 }

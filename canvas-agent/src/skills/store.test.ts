@@ -191,6 +191,49 @@ test("读取或修改不存在的 Skill 不会创建目录", async (context) => 
     await assert.rejects(fs.access(skillsRoot));
 });
 
+test("GitHub 仓库优先导入根 Skill，并拒绝更新被本地修改的文件", async (context) => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "canvas-skill-store-"));
+    const originalFetch = globalThis.fetch;
+    context.after(() => {
+        globalThis.fetch = originalFetch;
+        return fs.rm(workspace, { recursive: true, force: true });
+    });
+    const skillText = "---\nname: github-demo\ndescription: Imported demo Skill\n---\n\nRun the imported workflow.\n";
+    globalThis.fetch = (async (input) => {
+        const url = String(input);
+        if (url.endsWith("/repos/example/demo")) return jsonResponse({ default_branch: "main" });
+        if (url.endsWith("/repos/example/demo/commits/main")) return jsonResponse({ sha: "commit-sha", commit: { tree: { sha: "tree-sha" } } });
+        if (url.includes("/repos/example/demo/git/trees/tree-sha")) {
+            return jsonResponse({ tree: [
+                { path: "SKILL.md", mode: "100644", type: "blob" },
+                { path: "examples/other/SKILL.md", mode: "100644", type: "blob" },
+                { path: "scripts/run.js", mode: "100755", type: "blob" },
+            ] });
+        }
+        if (url.endsWith("/commit-sha/SKILL.md")) return new Response(skillText);
+        if (url.endsWith("/commit-sha/examples/other/SKILL.md")) return new Response("---\nname: other\ndescription: Nested example Skill\n---\n\nRun the example.\n");
+        if (url.endsWith("/commit-sha/scripts/run.js")) return new Response("export default true;\n");
+        return new Response(null, { status: 404 });
+    }) as typeof fetch;
+    const store = new SkillStore(workspace);
+
+    const imported = await store.importFromGitHub("example/demo");
+    assert.equal(imported.editable, false);
+    assert.equal(imported.origin?.repository, "example/demo");
+    assert.equal(await fs.readFile(path.join(path.dirname(imported.path), "scripts", "run.js"), "utf8"), "export default true;\n");
+    assert.deepEqual(await store.managementForPaths([imported.path]), [{ managed: true, editable: false, origin: imported.origin }]);
+
+    await fs.writeFile(path.join(path.dirname(imported.path), "scripts", "run.js"), "changed locally\n");
+    await assert.rejects(store.updateFromGitHub("github-demo"), /已在本地修改/);
+    const current = await store.get("github-demo");
+    await store.delete("github-demo", current.revision);
+    await assert.rejects(fs.access(path.dirname(imported.path)));
+});
+
+function jsonResponse(value: unknown) {
+    return new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } });
+}
+
 test("更新后只保留完整文件且不遗留临时文件", async (context) => {
     const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "canvas-skill-store-"));
     context.after(() => fs.rm(workspace, { recursive: true, force: true }));

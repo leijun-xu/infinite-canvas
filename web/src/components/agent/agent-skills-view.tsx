@@ -1,16 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { GithubOutlined } from "@ant-design/icons";
 import { App, Button, Collapse, Dropdown, Form, Input, Modal, Select, Switch, Tooltip } from "antd";
 import type { MenuProps } from "antd";
 import { Check, ChevronDown, CircleAlert, FilePenLine, LoaderCircle, LockKeyhole, MessageSquareText, Plus, RefreshCw, Search, Sparkles, Trash2, Workflow } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { canvasThemes } from "@/lib/canvas-theme";
-import { createCodexSkill, createCodexSkillDraft, deleteCodexSkill, fetchCodexSkill, postState, setCodexSkillEnabled, updateCodexSkill, type AgentSkillDetail, type AgentSkillDraft, type AgentSkillInterface, type AgentSkillScope, type AgentSkillSummary } from "@/services/api/canvas-agent";
+import { createCodexSkill, createCodexSkillDraft, deleteCodexSkill, fetchCodexSkill, importCodexSkillFromGitHub, postState, setCodexSkillEnabled, updateCodexSkill, updateCodexSkillFromGitHub, type AgentSkillDetail, type AgentSkillDraft, type AgentSkillInterface, type AgentSkillScope, type AgentSkillSummary } from "@/services/api/canvas-agent";
 import { useAgentSkillStore } from "@/stores/use-agent-skill-store";
 import { useAgentStore, type AgentChatItem } from "@/stores/use-agent-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 
-type ScopeFilter = "all" | AgentSkillScope;
+type ScopeFilter = "all" | "github" | AgentSkillScope;
 type SkillDraftSource = "conversation" | "canvas";
 type SkillEditor = { mode: "create"; values?: SkillFormValues } | { mode: "edit"; detail: AgentSkillDetail };
 type SkillFormValues = { name: string; description: string; instructions: string; displayName?: string; shortDescription?: string; defaultPrompt?: string };
@@ -48,15 +49,19 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
     const [saving, setSaving] = useState(false);
     const [advancedOpen, setAdvancedOpen] = useState(false);
     const [createMenuOpen, setCreateMenuOpen] = useState(false);
+    const [importOpen, setImportOpen] = useState(false);
+    const [importing, setImporting] = useState(false);
     const [busySkill, setBusySkill] = useState("");
     const [errorsOpen, setErrorsOpen] = useState(false);
     const confirmRef = useRef<{ destroy: () => void } | null>(null);
     const [form] = Form.useForm<SkillFormValues>();
+    const [importForm] = Form.useForm<{ source: string }>();
     const endpoint = url.trim().replace(/\/$/, "");
     const filteredSkills = useMemo(() => {
         const keyword = query.trim().toLowerCase();
         return skills.filter((skill) => {
-            if (scope !== "all" && skill.scope !== scope) return false;
+            if (scope === "github" && skill.origin?.type !== "github") return false;
+            if (scope !== "all" && scope !== "github" && (skill.origin?.type === "github" || skill.scope !== scope)) return false;
             return !keyword || [skill.name, skill.description, skill.interface?.displayName, skill.interface?.shortDescription, skill.shortDescription].some((value) => value?.toLowerCase().includes(keyword));
         });
     }, [query, scope, skills]);
@@ -80,10 +85,13 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
         setSaving(false);
         setAdvancedOpen(false);
         setCreateMenuOpen(false);
+        setImportOpen(false);
+        setImporting(false);
         setBusySkill("");
         setErrorsOpen(false);
         form.resetFields();
-    }, [connected, form]);
+        importForm.resetFields();
+    }, [connected, form, importForm]);
     const useSkill = (skill: AgentSkillSummary) => {
         selectSkill(skill);
         setAgentState({ activeTab: "chat" });
@@ -120,7 +128,7 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
         }
     };
     const openEdit = async (skill: AgentSkillSummary) => {
-        if (!skill.managed || busySkill || useAgentSkillStore.getState().generatingSource) return;
+        if (skill.editable === false || !skill.managed || busySkill || useAgentSkillStore.getState().generatingSource) return;
         const connectionRevision = useAgentSkillStore.getState().connectionRevision;
         setBusySkill(skill.path);
         try {
@@ -207,6 +215,44 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
             },
         });
     };
+    const importGitHubSkill = async () => {
+        let source: string;
+        try {
+            source = (await importForm.validateFields()).source.trim();
+        } catch {
+            return;
+        }
+        const connectionRevision = useAgentSkillStore.getState().connectionRevision;
+        if (!connectionIsCurrent(connectionRevision)) return;
+        setImporting(true);
+        try {
+            await importCodexSkillFromGitHub(endpoint, token, source);
+            if (!connectionIsCurrent(connectionRevision)) return;
+            setImportOpen(false);
+            importForm.resetFields();
+            await refresh();
+            if (connectionIsCurrent(connectionRevision)) message.success(t("agent.skillManager.githubImported"));
+        } catch (error) {
+            if (connectionIsCurrent(connectionRevision)) message.error(error instanceof Error ? error.message : t("agent.skillManager.githubImportFailed"));
+        } finally {
+            if (connectionIsCurrent(connectionRevision)) setImporting(false);
+        }
+    };
+    const updateGitHubSkill = async (skill: AgentSkillSummary) => {
+        const connectionRevision = useAgentSkillStore.getState().connectionRevision;
+        if (!connectionIsCurrent(connectionRevision)) return;
+        setBusySkill(skill.path);
+        try {
+            await updateCodexSkillFromGitHub(endpoint, token, skill.name);
+            if (!connectionIsCurrent(connectionRevision)) return;
+            await refresh();
+            if (connectionIsCurrent(connectionRevision)) message.success(t("agent.skillManager.githubUpdated"));
+        } catch (error) {
+            if (connectionIsCurrent(connectionRevision)) message.error(error instanceof Error ? error.message : t("agent.skillManager.githubUpdateFailed"));
+        } finally {
+            if (connectionIsCurrent(connectionRevision)) setBusySkill("");
+        }
+    };
     const toggleEnabled = async (skill: AgentSkillSummary, enabled: boolean) => {
         const connectionRevision = useAgentSkillStore.getState().connectionRevision;
         if (!connectionIsCurrent(connectionRevision)) return;
@@ -247,6 +293,17 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
                     </div>
                 ),
             },
+            {
+                key: "github",
+                icon: <GithubOutlined className="text-base" />,
+                disabled: codexBusy,
+                label: (
+                    <div className="py-0.5">
+                        <div className="text-sm">{t("agent.skillManager.fromGitHub")}</div>
+                        <div className="mt-0.5 text-xs" style={{ color: theme.node.muted }}>{t(codexBusy ? "agent.skillManager.availableAfterRun" : "agent.skillManager.githubDescription")}</div>
+                    </div>
+                ),
+            },
             { type: "divider" as const },
             {
                 key: "manual",
@@ -260,7 +317,8 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
             },
         ],
         onClick: ({ key }) => {
-            if (key === "manual") {
+            if (key === "github") setImportOpen(true);
+            else if (key === "manual") {
                 setDraft(null);
                 setEditor({ mode: "create" });
             }
@@ -297,7 +355,7 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
                         disabled={!connected}
                         value={scope}
                         onChange={setScope}
-                        options={[{ value: "all", label: t("agent.skillManager.scopes.all") }, ...(["repo", "user", "system", "admin"] as AgentSkillScope[]).map((value) => ({ value, label: t(`agent.skillManager.scopes.${value}`) }))]}
+                        options={(["all", "repo", "github", "user", "system", "admin"] as ScopeFilter[]).map((value) => ({ value, label: t(`agent.skillManager.scopes.${value}`) }))}
                     />
                 </div>
                 {errors.length ? (
@@ -312,6 +370,7 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
                         {filteredSkills.map((skill) => {
                             const selected = selectedSkill?.name === skill.name && selectedSkill.path === skill.path;
                             const busy = busySkill === skill.path;
+                            const editable = skill.editable !== false && skill.managed;
                             return (
                                 <div key={`${skill.name}:${skill.path}`} className={`py-3 transition-opacity ${skill.enabled ? "" : "opacity-55"}`} style={{ borderColor: theme.node.stroke }}>
                                     <div className="flex items-start gap-3">
@@ -319,11 +378,11 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
                                         <div className="min-w-0 flex-1">
                                             <div className="flex min-w-0 items-center gap-2">
                                                 <span className="truncate text-sm font-medium">{skill.interface?.displayName || skill.name}</span>
-                                                {!skill.managed ? <Tooltip title={t("agent.skillManager.externalReadonly")}><LockKeyhole className="size-3.5 shrink-0" style={{ color: theme.node.faint }} /></Tooltip> : null}
+                                                {!editable ? <Tooltip title={t(skill.origin?.type === "github" ? "agent.skillManager.githubReadonly" : "agent.skillManager.externalReadonly")}><LockKeyhole className="size-3.5 shrink-0" style={{ color: theme.node.faint }} /></Tooltip> : null}
                                             </div>
                                             <div className="mt-1 line-clamp-2 text-xs leading-5" style={{ color: theme.node.muted }}>{skill.interface?.shortDescription || skill.shortDescription || skill.description || t("agent.skillManager.noDescription")}</div>
                                             <Tooltip title={skill.path}>
-                                                <div className="mt-1.5 truncate text-[11px]" style={{ color: theme.node.faint }}>{t(`agent.skillManager.scopes.${skill.scope}`)} · {skill.name}</div>
+                                                <div className="mt-1.5 truncate text-[11px]" style={{ color: theme.node.faint }}>{skill.origin?.type === "github" ? `GitHub · ${skill.origin.repository}` : `${t(`agent.skillManager.scopes.${skill.scope}`)} · ${skill.name}`}</div>
                                             </Tooltip>
                                         </div>
                                     </div>
@@ -334,12 +393,9 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
                                         </label>
                                         <div className="flex items-center gap-0.5">
                                             <Button type="text" size="small" disabled={!connected || !skill.enabled || Boolean(busySkill)} icon={selected ? <Check className="size-3.5" /> : <Sparkles className="size-3.5" />} onClick={() => useSkill(skill)}>{t(selected ? "agent.skillManager.selected" : "agent.skillManager.use")}</Button>
-                                            {skill.managed ? (
-                                                <>
-                                                    <Tooltip title={t("common.edit")}><Button type="text" shape="circle" size="small" aria-label={t("agent.skillManager.editNamed", { name: skill.interface?.displayName || skill.name })} disabled={!connected || Boolean(busySkill) || Boolean(generatingSource)} icon={<FilePenLine className="size-3.5" />} onClick={() => void openEdit(skill)} /></Tooltip>
-                                                    <Tooltip title={t("common.delete")}><Button danger type="text" shape="circle" size="small" aria-label={t("agent.skillManager.deleteNamed", { name: skill.interface?.displayName || skill.name })} disabled={!connected || Boolean(busySkill) || Boolean(generatingSource)} icon={<Trash2 className="size-3.5" />} onClick={() => confirmDelete(skill)} /></Tooltip>
-                                                </>
-                                            ) : null}
+                                            {editable ? <Tooltip title={t("common.edit")}><Button type="text" shape="circle" size="small" aria-label={t("agent.skillManager.editNamed", { name: skill.interface?.displayName || skill.name })} disabled={!connected || Boolean(busySkill) || Boolean(generatingSource)} icon={<FilePenLine className="size-3.5" />} onClick={() => void openEdit(skill)} /></Tooltip> : null}
+                                            {skill.origin?.type === "github" ? <Tooltip title={t("agent.skillManager.updateFromGitHub")}><Button type="text" shape="circle" size="small" aria-label={t("agent.skillManager.updateNamed", { name: skill.interface?.displayName || skill.name })} disabled={!connected || Boolean(busySkill) || Boolean(generatingSource)} icon={<RefreshCw className="size-3.5" />} onClick={() => void updateGitHubSkill(skill)} /></Tooltip> : null}
+                                            {skill.managed ? <Tooltip title={t("common.delete")}><Button danger type="text" shape="circle" size="small" aria-label={t("agent.skillManager.deleteNamed", { name: skill.interface?.displayName || skill.name })} disabled={!connected || Boolean(busySkill) || Boolean(generatingSource)} icon={<Trash2 className="size-3.5" />} onClick={() => confirmDelete(skill)} /></Tooltip> : null}
                                         </div>
                                     </div>
                                 </div>
@@ -359,6 +415,27 @@ export function AgentSkillsView({ clientId }: { clientId: string }) {
                 <div className="thin-scrollbar mt-4 max-h-[60vh] overflow-y-auto rounded-md border px-3 py-2 text-xs leading-5" style={{ borderColor: theme.node.stroke }}>
                     {errors.map((error, index) => <div key={`${index}:${error}`} className="break-all py-1" style={{ color: theme.node.muted }}>{error}</div>)}
                 </div>
+            </Modal>
+
+            <Modal
+                title={t("agent.skillManager.fromGitHub")}
+                open={importOpen}
+                okText={t("agent.skillManager.import")}
+                cancelText={t("common.cancel")}
+                confirmLoading={importing}
+                centered
+                destroyOnHidden
+                onCancel={() => {
+                    if (!importing) setImportOpen(false);
+                }}
+                onOk={() => void importGitHubSkill()}
+            >
+                <div className="mb-4 text-xs leading-5" style={{ color: theme.node.muted }}>{t("agent.skillManager.githubImportHint")}</div>
+                <Form form={importForm} layout="vertical" preserve={false}>
+                    <Form.Item name="source" label={t("agent.skillManager.githubSource")} rules={[{ required: true, whitespace: true, message: t("agent.skillManager.githubSourceRequired") }]}>
+                        <Input autoFocus placeholder={t("agent.skillManager.githubSourcePlaceholder")} />
+                    </Form.Item>
+                </Form>
             </Modal>
 
             <Modal

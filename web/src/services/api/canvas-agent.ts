@@ -14,6 +14,7 @@ export class AgentApiError<T = unknown> extends Error {
 
 export type AgentSkillScope = "user" | "repo" | "system" | "admin";
 export type AgentSkillInterface = { displayName?: string | null; shortDescription?: string | null; defaultPrompt?: string | null };
+export type AgentSkillOrigin = { type: "github"; repository: string; source: string; url: string; ref: string; path: string; commit: string };
 export type AgentSkillSummary = {
     name: string;
     description: string;
@@ -24,6 +25,8 @@ export type AgentSkillSummary = {
     scope: AgentSkillScope;
     enabled: boolean;
     managed: boolean;
+    editable: boolean;
+    origin?: AgentSkillOrigin;
 };
 export type AgentSkillDetail = {
     name: string;
@@ -32,6 +35,8 @@ export type AgentSkillDetail = {
     interface?: AgentSkillInterface | null;
     path: string;
     managed: true;
+    editable: boolean;
+    origin?: AgentSkillOrigin;
     revision: string;
 };
 export type AgentSkillInput = { name?: string; description: string; instructions: string; interface?: AgentSkillInterface | null; expectedRevision?: string };
@@ -103,6 +108,14 @@ export function fetchCodexSkill(endpoint: string, token: string, name: string) {
 
 export function createCodexSkill(endpoint: string, token: string, input: AgentSkillInput) {
     return fetchAgentJson<AgentSkillResponse>(endpoint, token, "/agent/codex/skills", jsonPost(input));
+}
+
+export function importCodexSkillFromGitHub(endpoint: string, token: string, source: string) {
+    return fetchAgentJson<AgentSkillResponse>(endpoint, token, "/agent/codex/skills/github/import", jsonPost({ source }));
+}
+
+export function updateCodexSkillFromGitHub(endpoint: string, token: string, name: string) {
+    return fetchAgentJson<AgentSkillResponse>(endpoint, token, `/agent/codex/skills/${encodeURIComponent(name)}/github/update`, jsonPost({}));
 }
 
 export function createCodexSkillDraft(endpoint: string, token: string, input: AgentSkillDraftInput) {

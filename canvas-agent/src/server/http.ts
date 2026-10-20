@@ -196,7 +196,8 @@ export function startHttpServer() {
     app.get("/agent/codex/skills", route(async (req, res) => {
         const workspace = ensureSiteWorkspace(config);
         const result = await listCodexSkills(emit, workspace.workspacePath, String(req.query.forceReload || "") === "1");
-        res.json({ ok: true, data: result.skills.map((skill) => ({ ...skill, managed: skillStore.isManagedPath(skill.path) })), errors: result.errors });
+        const management = await skillStore.managementForPaths(result.skills.map((skill) => skill.path));
+        res.json({ ok: true, data: result.skills.map((skill, index) => ({ ...skill, ...management[index] })), errors: result.errors });
     }));
     /** 从当前对话或画布快照中提炼可保存的 Skill 草稿。 */
     app.post("/agent/codex/skills/draft", codexMutation(async (req, res) => {
@@ -241,6 +242,18 @@ export function startHttpServer() {
         const data = await skillStore.create(req.body);
         session.emitAll("skills_changed", { forceReload: true });
         res.status(201).json({ ok: true, data });
+    }));
+    /** 从 GitHub 仓库下载、校验并安装只读 Skill。 */
+    app.post("/agent/codex/skills/github/import", codexMutation(async (req, res) => {
+        const data = await skillStore.importFromGitHub(req.body?.source);
+        session.emitAll("skills_changed", { forceReload: true });
+        res.status(201).json({ ok: true, data });
+    }));
+    /** 按记录的 GitHub 来源更新未被本地修改的 Skill。 */
+    app.post("/agent/codex/skills/:name/github/update", codexMutation(async (req, res) => {
+        const data = await skillStore.updateFromGitHub(routeParam(req.params.name));
+        session.emitAll("skills_changed", { forceReload: true });
+        res.json({ ok: true, data });
     }));
     /** 启用或停用指定 Skill，并同步更新 Codex 的有效 Skill 配置。 */
     app.post("/agent/codex/skills/:name/enabled", codexMutation(async (req, res) => {
