@@ -436,7 +436,7 @@ export class CanvasSession {
         });
     }
 
-    /** 校验工具参数并将调用分派到当前目标网页。 */
+    /** 校验并执行 MCP 工具：只读工具直接读取快照，写工具通过 SSE 派发给目标网页。 */
     async callTool(name: unknown, rawInput: unknown) {
         if (!isToolName(name)) throw new Error(`未知工具：${String(name)}`);
         logger.info("MCP tool called", { name, input: rawInput, targetClientId: this.targetClientId });

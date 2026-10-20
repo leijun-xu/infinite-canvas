@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2048" height="1024" viewBox="0 0 2048 1024">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#142b56"/>
+      <stop offset="0.42" stop-color="#4d86b5"/>
+      <stop offset="0.72" stop-color="#f3ad73"/>
+      <stop offset="1" stop-color="#f9d2a2"/>
+    </linearGradient>
+    <linearGradient id="water" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d08d69"/>
+      <stop offset="0.16" stop-color="#426f88"/>
+      <stop offset="0.68" stop-color="#173d52"/>
+      <stop offset="1" stop-color="#081d2b"/>
+    </linearGradient>
+    <radialGradient id="sunGlow">
+      <stop offset="0" stop-color="#fffce4" stop-opacity="0.95"/>
+      <stop offset="0.18" stop-color="#ffd59b" stop-opacity="0.65"/>
+      <stop offset="1" stop-color="#ffd59b" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="snow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f5f5ef"/>
+      <stop offset="1" stop-color="#9bb0bd"/>
+    </linearGradient>
+    <linearGradient id="reflection" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd49c" stop-opacity="0.7"/>
+      <stop offset="1" stop-color="#ffd49c" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="blur">
+      <feGaussianBlur stdDeviation="22"/>
+    </filter>
+  </defs>
+
+  <rect width="2048" height="560" fill="url(#sky)"/>
+  <rect y="560" width="2048" height="464" fill="url(#water)"/>
+  <circle cx="1530" cy="270" r="245" fill="url(#sunGlow)" filter="url(#blur)"/>
+  <circle cx="1530" cy="270" r="48" fill="#fff8d8"/>
+
+  <g fill="#fff" opacity="0.22">
+    <ellipse cx="280" cy="255" rx="150" ry="28"/>
+    <ellipse cx="430" cy="280" rx="220" ry="35"/>
+    <ellipse cx="915" cy="185" rx="180" ry="30"/>
+    <ellipse cx="1130" cy="214" rx="145" ry="24"/>
+    <ellipse cx="1830" cy="345" rx="205" ry="32"/>
+    <ellipse cx="75" cy="345" rx="205" ry="32"/>
+  </g>
+
+  <path d="M0 520 L0 490 L120 400 L230 468 L355 320 L470 445 L610 245 L760 430 L890 292 L1025 448 L1160 335 L1295 460 L1420 278 L1570 430 L1705 330 L1840 455 L1970 395 L2048 490 L2048 520 Z"
+        fill="#40596b"/>
+  <path d="M0 520 L0 505 L120 415 L230 480 L355 342 L470 460 L610 270 L760 446 L890 315 L1025 463 L1160 356 L1295 475 L1420 302 L1570 447 L1705 352 L1840 470 L1970 412 L2048 505 L2048 520 Z"
+        fill="#203e50"/>
+  <path d="M300 384 L355 320 L421 388 L386 375 L356 352 L333 378 Z
+           M540 328 L610 245 L688 337 L645 319 L611 278 L580 322 Z
+           M824 362 L890 292 L955 363 L917 346 L890 320 L862 350 Z
+           M1360 350 L1420 278 L1491 360 L1450 340 L1420 307 L1390 342 Z
+           M1642 397 L1705 330 L1770 400 L1734 386 L1705 357 L1676 388 Z"
+        fill="url(#snow)"/>
+
+  <path d="M0 538 Q125 495 250 535 T500 532 T750 538 T1000 530 T1250 537 T1500 530 T1750 538 T2048 532 L2048 590 L0 590 Z"
+        fill="#0c2934"/>
+  <g fill="#132f31">
+    <path d="M40 554 l34 -130 34 130 Z M92 558 l45 -165 45 165 Z M175 558 l30 -110 30 110 Z"/>
+    <path d="M485 560 l42 -155 42 155 Z M548 562 l30 -115 30 115 Z M670 560 l50 -180 50 180 Z"/>
+    <path d="M1040 560 l38 -142 38 142 Z M1125 560 l48 -176 48 176 Z M1235 560 l31 -116 31 116 Z"/>
+    <path d="M1750 560 l42 -155 42 155 Z M1830 560 l32 -120 32 120 Z M1945 558 l45 -165 45 165 Z"/>
+  </g>
+
+  <path d="M1455 560 L1605 560 L1715 1024 L1325 1024 Z" fill="url(#reflection)" opacity="0.42"/>
+  <g fill="none" stroke-linecap="round">
+    <path d="M120 630 Q360 612 600 631 T1080 630 T1560 631 T2048 630" stroke="#aac2c8" stroke-opacity="0.22" stroke-width="4"/>
+    <path d="M0 710 Q220 690 440 711 T880 710 T1320 711 T1760 710 T2048 708" stroke="#aac2c8" stroke-opacity="0.16" stroke-width="5"/>
+    <path d="M210 810 Q450 787 690 810 T1170 809 T1650 810 T2048 806" stroke="#7ea0aa" stroke-opacity="0.13" stroke-width="6"/>
+    <path d="M0 930 Q270 905 540 930 T1080 929 T1620 930 T2048 926" stroke="#6b909c" stroke-opacity="0.12" stroke-width="7"/>
+  </g>
+
+  <path d="M0 942 Q120 900 240 948 T480 946 T720 950 T960 944 T1200 949 T1440 943 T1680 948 T1920 942 Q1984 920 2048 942 L2048 1024 L0 1024 Z"
+        fill="#061821" opacity="0.88"/>
+</svg>

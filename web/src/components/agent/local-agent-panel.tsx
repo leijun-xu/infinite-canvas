@@ -355,7 +355,9 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                 if (isCurrentConnection()) addEventLog(rt("conversationSyncFailed"), error);
             });
         };
+        /** 接收 Canvas Agent 推送的 Codex 状态、流式消息、审批请求和网页工具调用。 */
         const source = new EventSource(`${endpoint}/events?token=${encodeURIComponent(token)}&clientId=${encodeURIComponent(clientId)}`);
+        /** 完成 SSE 握手，校验协议版本并恢复当前会话、Turn、审批和画布快照。 */
         source.addEventListener("hello", (event) => {
             if (!isCurrentConnection()) return;
             const hello = parseEventData<AgentHelloEvent>(event);
@@ -411,6 +413,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                     });
             }
         });
+        /** 同步 Codex 忙闲状态和当前 Turn，任务结束后刷新权威线程历史。 */
         source.addEventListener("codex_state", (event) => {
             const data = parseEventData<AgentCodexState>(event);
             if (!data) return;
@@ -433,11 +436,13 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                 if (!busy && current.waiting) void loadThreads(false, turnId);
             });
         });
+        /** 接收需要网页执行的站点或画布工具，并进入确认与执行流程。 */
         source.addEventListener("tool_call", (event) => {
             if (!isCurrentConnection()) return;
             const data = parseEventData<AgentPendingToolCall>(event);
             if (data) void handleToolCall(endpoint, token, data);
         });
+        /** 接收 Codex 命令执行或文件修改审批，并展示待用户处理的审批项。 */
         source.addEventListener("codex_approval", (event) => {
             if (!isCurrentConnection()) return;
             const data = parseEventData<AgentPendingApproval>(event);
@@ -445,6 +450,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             setAgentState({ pendingApprovals: [...useAgentStore.getState().pendingApprovals.filter((item) => item.requestId !== data.requestId), data], activity: rt("awaitingApproval") });
             addEventLog(rt("awaitingApproval"), data.reason || data.method, data);
         });
+        /** 同步审批处理结果，移除已完成的审批项并恢复当前活动状态。 */
         source.addEventListener("codex_approval_resolved", (event) => {
             if (!isCurrentConnection()) return;
             const data = parseEventData<{ requestId?: string; decision?: "accept" | "acceptForSession" | "decline" | "cancel" }>(event);
@@ -456,6 +462,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             const decision = data.decision || approval?.deciding;
             if (approval && decision) addEventLog(rt(decision === "accept" || decision === "acceptForSession" ? "approvalGranted" : "approvalCanceled"), approval.reason || approval.method, approval);
         });
+        /** 处理 Codex 的流式回复、推理、计划、工具、Token 和 Turn 生命周期事件。 */
         source.addEventListener("agent_event", (event) => {
             const data = parseEventData<AgentEventPayload>(event);
             if (data) enqueueEvent(() => {
@@ -465,6 +472,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                 return handleAgentEvent(data);
             });
         });
+        /** 记录会话准备和 MCP Server 启动、就绪、失败等初始化状态。 */
         source.addEventListener("agent_bootstrap", (event) => {
             const data = parseEventData<AgentBootstrapEvent>(event);
             if (!data?.type) return;
@@ -491,10 +499,12 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                         : { text: rt("mcpCanceledNamed", { name: label }), detail: rt("toolInitCanceled"), status: "error" as const };
             addEventLog(status.text, status.detail, data);
         });
+        /** 同步服务端会话状态及 revision，确保前端操作基于最新会话。 */
         source.addEventListener("conversation_changed", (event) => {
             const data = parseEventData<AgentConversationState>(event);
             if (data) enqueueEvent(() => { applyConversationState(data); });
         });
+        /** 同步当前工作区会话切换，并按需重新加载线程列表和历史。 */
         source.addEventListener("workspace_changed", (event) => {
             const data = parseEventData<AgentWorkspaceEvent>(event);
             if (!data) return;
@@ -504,6 +514,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                 if (!data.draftThread) void loadThreads(Boolean(data.emptyThread));
             });
         });
+        /** 接收已物化的用户或助手消息，并按线程、Turn 和消息 ID 合并去重。 */
         source.addEventListener("chat_message", (event) => {
             const data = parseEventData<AgentChatEvent>(event);
             if (!data?.message) return;
@@ -523,16 +534,19 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                 setAgentState({ messages });
             });
         });
+        /** 将 Agent 子进程输出写入前端运行日志面板。 */
         source.addEventListener("agent_log", (event) => {
             if (!isCurrentConnection()) return;
             const text = parseEventData<{ text?: unknown }>(event)?.text;
             addEventLog(rt("log"), text, text);
         });
+        /** Skill 文件变化后重新请求可用 Skill 列表。 */
         source.addEventListener("skills_changed", (event) => {
             if (!isCurrentConnection()) return;
             const data = parseEventData<{ forceReload?: boolean }>(event);
             void loadSkills(endpoint, token, Boolean(data?.forceReload));
         });
+        /** 处理当前线程的 Agent 错误，并避免重放事件重复记录错误提示。 */
         source.addEventListener("agent_error", (event) => {
             const data = parseEventData<AgentEventPayload>(event);
             if (!data) return;
@@ -625,6 +639,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             document.removeEventListener("visibilitychange", activateVisible);
         };
     }, [connected, endpoint, token]);
+    /** 校验并组装提示词、画布引用、Skill 和附件，然后提交新的 Codex Turn。 */
     const sendPrompt = async () => {
         const text = prompt.trim();
         const files = attachments;
@@ -685,6 +700,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             const modelName = models.find((item) => item.model === model)?.displayName || model || rt("defaultModel");
             const effortName = reasoningEffort ? i18n.t(`agent.composer.effort.${reasoningEffort}`) : rt("defaultEffort");
             addEventLog(rt("sendTask"), `${modelName} · ${effortName}${selectedSkill ? ` · Skill ${selectedSkill.name}` : ""}${files.length ? ` · ${rt("attachmentCount", { count: files.length })}` : ""}${canvasReferences.length ? ` · ${rt("canvasReferenceCount", { count: canvasReferences.length })}` : ""} · ${compactText(text) || rt(canvasReferences.length ? "canvasReferencesOnly" : "attachmentsOnly")}`);
+            /** 接口仅确认任务已接受，后续状态、回复和工具调用通过 SSE 异步推送。 */
             const accepted = await fetchAgentJson<AgentTurnResponse>(endpoint, token, "/agent/codex/turn", {
                 method: "POST",
                 headers: { "content-type": "application/json" },
@@ -790,6 +806,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         setAgentState({ attachments: attachments.filter((item) => item.id !== id) });
     };
 
+    /** 接收 Agent 派发的网页工具调用，并按配置拦截需要用户确认的画布写操作。 */
     const handleToolCall = async (endpoint: string, token: string, payload: AgentPendingToolCall) => {
         if (confirmToolsRef.current && isCanvasWriteTool(payload.name)) {
             if (pendingToolRef.current) {
@@ -804,6 +821,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         await runToolCall(endpoint, token, payload);
     };
 
+    /** 在浏览器中执行站点或画布工具，并通过 requestId 将结果回传给等待中的 MCP 调用。 */
     const runToolCall = async (endpoint: string, token: string, payload: AgentPendingToolCall) => {
         if (isSiteTool(payload.name)) {
             try {

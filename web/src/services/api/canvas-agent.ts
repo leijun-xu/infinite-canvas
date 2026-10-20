@@ -41,6 +41,7 @@ export type AgentSkillsResponse = { ok?: boolean; data?: AgentSkillSummary[]; er
 export type AgentSkillResponse = { ok?: boolean; data?: AgentSkillDetail };
 export type AgentSkillDraftResponse = { ok?: boolean; data?: AgentSkillDraft };
 
+/** 向 Canvas Agent 上报当前网页的最新画布快照，供 Codex 读取画布状态。 */
 export async function postState(endpoint: string, token: string, clientId: string, snapshot: CanvasAgentSnapshot | null) {
     try {
         const response = await fetch(`${endpoint}/canvas/state?token=${encodeURIComponent(token)}&clientId=${encodeURIComponent(clientId)}`, {
@@ -54,24 +55,29 @@ export async function postState(endpoint: string, token: string, clientId: strin
     }
 }
 
+/** 将当前网页标记为活跃客户端，使后续工具调用路由到这个标签页。 */
 export async function activateAgentClient(endpoint: string, token: string, clientId: string) {
     try {
         await fetch(`${endpoint}/canvas/activate?token=${encodeURIComponent(token)}&clientId=${encodeURIComponent(clientId)}`, { method: "POST" });
     } catch {}
 }
 
+/** 回传网页工具的执行结果，使等待中的 MCP 工具调用继续返回给 Codex。 */
 export async function postToolResult(endpoint: string, token: string, clientId: string, body: { requestId: string; result?: unknown; error?: string }) {
     await fetchAgentJson(endpoint, token, `/canvas/result?clientId=${encodeURIComponent(clientId)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 }
 
+/** 回传用户对 Codex 命令执行或文件修改请求的审批决定。 */
 export async function postCodexApproval(endpoint: string, token: string, requestId: string, decision: "accept" | "acceptForSession" | "decline") {
     await fetchAgentJson(endpoint, token, "/agent/codex/approval", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ requestId, decision }) });
 }
 
+/** 请求中断当前正在运行的 Codex Turn。 */
 export async function interruptCodexTurn(endpoint: string, token: string, threadId?: string) {
     await fetchAgentJson(endpoint, token, "/agent/codex/interrupt", jsonPost({ threadId }));
 }
 
+/** 确认前端已加载指定 Turn 的权威历史，允许 Agent 清理对应事件重放缓存。 */
 export async function acknowledgeCodexHistory(endpoint: string, token: string, threadId: string, turnIds: string[]) {
     await fetchAgentJson(endpoint, token, "/agent/codex/history/ack", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ threadId, turnIds }) });
 }
