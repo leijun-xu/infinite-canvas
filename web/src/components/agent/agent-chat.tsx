@@ -38,8 +38,11 @@ export function AgentChatTimeline({
     const timeline = useMemo(() => groupTimelineMessages(messages), [messages]);
     const listRef = useRef<HTMLDivElement>(null);
     const contentRef = useRef<HTMLDivElement>(null);
+    const bottomRef = useRef<HTMLDivElement>(null);
     const followMessagesRef = useRef(true);
+    const followedUserMessageRef = useRef("");
     const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+    const submittedUserMessageId = messages.at(-1)?.role === "user" ? messages.at(-1)?.id || "" : "";
     const streaming = messages.some((message) => message.streamId);
     const showBootstrap = Boolean(bootstrapStatus && !messages.some((message) => message.role === "user" || message.role === "assistant"));
     const working = showBootstrap ? bootstrapStatus! : workingActivity(messages.at(-1));
@@ -51,30 +54,35 @@ export function AgentChatTimeline({
         setShowScrollToBottom(!atBottom);
     }, []);
     const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
-        const list = listRef.current;
-        if (!list) return;
+        const bottom = bottomRef.current;
+        if (!bottom) return;
         followMessagesRef.current = true;
-        list.scrollTo({ top: list.scrollHeight, behavior });
+        bottom.scrollIntoView({ behavior, block: "end", inline: "nearest" });
         setShowScrollToBottom(false);
     }, []);
     useEffect(() => {
-        const frame = requestAnimationFrame(() => (followMessagesRef.current ? scrollToBottom("auto") : updateScrollState()));
+        if (!submittedUserMessageId || followedUserMessageRef.current === submittedUserMessageId) return;
+        followedUserMessageRef.current = submittedUserMessageId;
+        followMessagesRef.current = true;
+    }, [submittedUserMessageId]);
+    useEffect(() => {
+        const frame = requestAnimationFrame(() => (streaming || followMessagesRef.current ? scrollToBottom("auto") : updateScrollState()));
         return () => cancelAnimationFrame(frame);
-    }, [messages, pendingApprovals, pendingTool, scrollToBottom, updateScrollState, waiting]);
+    }, [messages, pendingApprovals, pendingTool, scrollToBottom, streaming, updateScrollState, waiting]);
     useEffect(() => {
         const content = contentRef.current;
         if (!content) return;
         let frame = 0;
         const observer = new ResizeObserver(() => {
             cancelAnimationFrame(frame);
-            frame = requestAnimationFrame(() => (followMessagesRef.current ? scrollToBottom("auto") : updateScrollState()));
+            frame = requestAnimationFrame(() => (streaming || followMessagesRef.current ? scrollToBottom("auto") : updateScrollState()));
         });
         observer.observe(content);
         return () => {
             observer.disconnect();
             cancelAnimationFrame(frame);
         };
-    }, [scrollToBottom, updateScrollState]);
+    }, [scrollToBottom, streaming, updateScrollState]);
     return (
         <div className="relative min-h-0 flex-1">
             <div ref={listRef} className="thin-scrollbar h-full select-text overflow-y-auto" onScroll={updateScrollState}>
@@ -94,6 +102,7 @@ export function AgentChatTimeline({
                     {pendingApprovals.map((approval) => <AgentApprovalCard key={approval.requestId} approval={approval} theme={theme} onDecision={(decision) => onApprovalDecision(approval, decision)} />)}
                     {(sending || waiting || showBootstrap) && !streaming && !pendingTool && !pendingApprovals.length ? <AgentWorkingMessage text={working.text} detail={"detail" in working && typeof working.detail === "string" ? working.detail : undefined} status={showBootstrap ? bootstrapStatus?.status : undefined} mcpStatuses={showBootstrap ? Object.entries(mcpStartupStatuses).map(([name, item]) => ({ name, ...item })) : []} activityKey={working.key} theme={theme} /> : null}
                 </div>
+                <div ref={bottomRef} aria-hidden className="h-px" />
             </div>
             {showScrollToBottom ? (
                 <AgentScrollToBottom theme={theme} title={t("agent.chat.latestMessages")} onClick={() => scrollToBottom()} />

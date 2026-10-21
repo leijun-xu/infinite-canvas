@@ -322,6 +322,9 @@ export function toolName(name: string) {
     if (name === "exec" || name === "exec_command" || name.endsWith("__exec_command")) return tr("tools.executeCommand");
     if (name === "apply_patch" || name.endsWith("__apply_patch")) return tr("tools.editFiles");
     if (name === "web__run" || name.endsWith("__web__run")) return tr("tools.searchWeb");
+    if (name === "knowledge_list_sources") return i18n.t("knowledge.toolListSources");
+    if (name === "knowledge_search") return i18n.t("knowledge.toolSearch");
+    if (name === "knowledge_get_document") return i18n.t("knowledge.toolGetDocument");
     if (toolTranslationKeys[name]) return tr(`tools.${toolTranslationKeys[name]}`);
     if (isSiteTool(name)) return SITE_TOOL_LABELS[name];
     return name ? tr("toolNamed", { name }) : tr("toolOperation");
@@ -364,6 +367,8 @@ function toolInputRows(name: string, input: unknown) {
     input = parseToolArguments(input);
     if (name === "site_navigate") return [detailRow(tr("targetPage"), routeName(stringText(objectField(input, "path")) || "/"))].flatMap((row) => (row ? [row] : []));
     if (name === "prompts_search") return [detailRow(tr("searchContent"), objectField(input, "query"))].flatMap((row) => (row ? [row] : []));
+    if (name === "knowledge_search") return [detailRow(tr("searchContent"), objectField(input, "query"))].flatMap((row) => (row ? [row] : []));
+    if (name === "knowledge_get_document") return [detailRow(i18n.t("knowledge.documentId"), objectField(input, "documentId"))].flatMap((row) => (row ? [row] : []));
     if (name === "canvas_create_text_node") return [detailRow(tr("textContent"), objectField(input, "text"))].flatMap((row) => (row ? [row] : []));
     if (name === "canvas_apply_ops") return [detailRow(tr("operationContent"), summarizeCanvasAgentOps((objectField(input, "ops") as CanvasAgentOp[] | undefined) || []))].flatMap((row) => (row ? [row] : []));
     if (name === "canvas_create_attachment_nodes") return [detailRow(tr("imageCount"), Array.isArray(objectField(input, "attachmentIds")) ? (objectField(input, "attachmentIds") as unknown[]).length : 0)].flatMap((row) => (row ? [row] : []));
@@ -374,6 +379,9 @@ export function toolSummary(item?: AgentEventItem) {
     const result = parseToolResult(item?.result);
     const name = String(item?.tool || "");
     if (name === "site_navigate" || isSiteTool(name)) return siteToolSummary(name, result, parseToolArguments(item?.arguments));
+    if (name === "knowledge_list_sources") return i18n.t("knowledge.sourceResultCount", { count: Array.isArray(result) ? result.length : 0 });
+    if (name === "knowledge_search") return i18n.t("knowledge.searchResultCount", { count: Array.isArray(result) ? result.length : 0 });
+    if (name === "knowledge_get_document") return i18n.t("knowledge.documentLoaded");
     const nodeField = objectField(result, "nodes");
     const connectionField = objectField(result, "connections");
     const nodes = Array.isArray(nodeField) ? nodeField : [];
@@ -417,6 +425,7 @@ export function routeName(path: string) {
     if (path.startsWith("/video")) return tr("routes.video");
     if (path.startsWith("/prompts")) return tr("routes.prompts");
     if (path.startsWith("/assets")) return tr("routes.assets");
+    if (path.startsWith("/knowledge")) return i18n.t("navigation.knowledge");
     if (path.startsWith("/config")) return tr("routes.config");
     return path;
 }

@@ -10,6 +10,7 @@ import { messageMetadataStore } from "../agent/message-metadata.js";
 import type { AgentAttachment, AgentPermissionMode } from "../agent/types.js";
 import { AGENT_PROTOCOL_VERSION, CanvasSession } from "../canvas/session.js";
 import { DEFAULT_PORT, ensureSiteWorkspace, loadConfig, saveConfig, updateSiteWorkspace, type CanvasAgentConfig } from "../config.js";
+import { canvasKnowledgeInputSchema, KnowledgeStore } from "../knowledge/store.js";
 import { logger } from "../utils/logger.js";
 import { checkVersions } from "../version-check.js";
 import { SkillStore, SkillStoreError } from "../skills/store.js";
@@ -24,6 +25,8 @@ export function startHttpServer() {
     const initialWorkspace = ensureSiteWorkspace(config);
     const session = new CanvasSession(initialWorkspace.activeThreadId || "");
     const skillStore = new SkillStore(initialWorkspace.workspacePath);
+    const knowledgeStore = new KnowledgeStore();
+    const knowledgeReady = knowledgeStore.initialize();
     /** 将 Agent 事件广播到所属线程或全部网页。 */
     const emit = (type: string, payload: unknown) => {
         const value = payload && typeof payload === "object" && !Array.isArray(payload) ? payload as Record<string, unknown> : { value: payload };
@@ -183,8 +186,44 @@ export function startHttpServer() {
         res.setHeader("Cache-Control", "no-store");
         res.type(path.extname(filePath)).send(await readFile(filePath));
     }));
-    /** 接收 MCP Server 转发的工具调用，并读取画布状态或将写操作派发给网页。 */
-    app.post("/api/tools", route(async (req, res) => res.json({ ok: true, result: await session.callTool(req.body?.name, req.body?.input || {}) })));
+    /** 接收 MCP Server 转发的工具调用，并读取知识库、画布状态或将写操作派发给网页。 */
+    app.post("/api/tools", route(async (req, res) => {
+        await knowledgeReady;
+        const name = String(req.body?.name || "");
+        const input = req.body?.input || {};
+        if (name === "knowledge_list_sources") return void res.json({ ok: true, result: knowledgeStore.listSources() });
+        if (name === "knowledge_search") return void res.json({ ok: true, result: knowledgeStore.search(String(input.query || ""), positiveInteger(input.limit, "limit")) });
+        if (name === "knowledge_get_document") return void res.json({ ok: true, result: knowledgeStore.getDocument(String(input.documentId || "")) });
+        res.json({ ok: true, result: await session.callTool(name, input) });
+    }));
+    /** 返回当前本地知识源清单。 */
+    app.get("/agent/knowledge/sources", route(async (_req, res) => {
+        await knowledgeReady;
+        res.json({ ok: true, data: knowledgeStore.listSources() });
+    }));
+    /** 重新扫描当前 Agent 工作空间中的文本文件。 */
+    app.post("/agent/knowledge/workspace/scan", route(async (_req, res) => {
+        await knowledgeReady;
+        const source = await knowledgeStore.scanWorkspace(ensureSiteWorkspace(config).workspacePath);
+        res.json({ ok: true, data: source });
+    }));
+    /** 用浏览器本地画布中的文本内容替换画布知识源。 */
+    app.post("/agent/knowledge/canvases/sync", route(async (req, res) => {
+        await knowledgeReady;
+        const projects = canvasKnowledgeInputSchema.parse(req.body?.projects);
+        res.json({ ok: true, data: await knowledgeStore.syncCanvases(projects) });
+    }));
+    /** 搜索本地知识库，主要供知识库管理页面预览检索效果。 */
+    app.post("/agent/knowledge/search", route(async (req, res) => {
+        await knowledgeReady;
+        res.json({ ok: true, data: knowledgeStore.search(String(req.body?.query || "")) });
+    }));
+    /** 删除指定知识源及其全部文档。 */
+    app.delete("/agent/knowledge/sources/:sourceId", route(async (req, res) => {
+        await knowledgeReady;
+        await knowledgeStore.removeSource(routeParam(req.params.sourceId));
+        res.json({ ok: true });
+    }));
     /** 返回当前 Codex 工作空间、活跃线程和会话状态。 */
     app.get("/agent/codex/workspace", (_req, res) => {
         const workspace = ensureSiteWorkspace(config);
@@ -513,6 +552,12 @@ function routeParam(value: string | string[]) {
     return Array.isArray(value) ? value[0] || "" : value;
 }
 
+function positiveInteger(value: unknown, name: string) {
+    const number = Number(value);
+    if (!Number.isInteger(number) || number <= 0) throw new Error(`${name} 必须是正整数`);
+    return number;
+}
+
 function permissionMode(value: unknown): AgentPermissionMode {
     return value === "automatic" || value === "full" ? value : "request";
 }
@@ -572,7 +617,7 @@ function setCors(req: Request, res: Response, url: URL, config: CanvasAgentConfi
     const origin = req.headers.origin;
     res.setHeader("Access-Control-Allow-Origin", origin || "*");
     res.setHeader("Access-Control-Allow-Headers", "content-type,x-canvas-agent-token");
-    res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "DELETE,GET,POST,OPTIONS");
     res.setHeader("Access-Control-Allow-Private-Network", "true");
     if (!origin || req.method === "OPTIONS" || url.pathname === "/health" || url.pathname === "/config") return true;
     config.origins ||= [];

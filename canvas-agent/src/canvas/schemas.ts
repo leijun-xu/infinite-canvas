@@ -42,6 +42,9 @@ export const toolNames = [
     "prompts_search",
     "assets_list",
     "assets_add",
+    "knowledge_list_sources",
+    "knowledge_search",
+    "knowledge_get_document",
 ] as const;
 export type ToolName = (typeof toolNames)[number];
 
@@ -124,10 +127,13 @@ export const toolInputSchemas = {
     prompts_search: z.object({ keyword: z.string().optional(), category: z.string().optional(), tags: z.array(z.string()).optional(), page: z.number().optional(), pageSize: z.number().optional() }),
     assets_list: z.object({ kind: z.enum(["all", "text", "image", "video"]).optional(), keyword: z.string().optional(), page: z.number().optional(), pageSize: z.number().optional() }),
     assets_add: z.object({ kind: z.enum(["text", "image"]), title: z.string(), content: z.string().optional(), imageUrl: z.string().optional(), tags: z.array(z.string()).optional(), source: z.string().optional(), note: z.string().optional() }),
+    knowledge_list_sources: z.object({}).passthrough(),
+    knowledge_search: z.object({ query: z.string().min(1), limit: z.number().int().positive() }),
+    knowledge_get_document: z.object({ documentId: z.string().min(1) }),
 } satisfies Record<ToolName, z.AnyZodObject>;
 
 export const toolDescriptions: Record<ToolName, string> = {
-    site_navigate: "跳转网站页面。path 可为 / (首页)、/canvas (我的画布)、/canvas/:id (指定画布)、/image (生图工作台)、/video (视频创作台)、/prompts (提示词库)、/assets (我的素材)、/config (配置)。操作画布前若不在画布页，先用本工具打开画布。",
+    site_navigate: "跳转网站页面。path 可为 / (首页)、/canvas (我的画布)、/canvas/:id (指定画布)、/image (生图工作台)、/video (视频创作台)、/prompts (提示词库)、/assets (我的素材)、/knowledge (知识库)、/config (配置)。操作画布前若不在画布页，先用本工具打开画布。",
     canvas_list_projects: "列出用户全部画布（仅标题、创建/更新时间、节点数、连线数，不含完整数据），支持 keyword 搜索和 page/pageSize 分页。返回的 id 可配合 site_navigate 跳转到 /canvas/:id 打开对应画布。",
     canvas_get_state: "读取当前网页画布的节点、连线、选区和视口。",
     canvas_get_selection: "读取当前网页画布选中的节点。",
@@ -161,4 +167,7 @@ export const toolDescriptions: Record<ToolName, string> = {
     prompts_search: "搜索提示词库（第三方提示词合集），支持 keyword、category、tags 过滤和 page/pageSize 分页，返回标题、提示词、分类、标签、封面等。",
     assets_list: "列出用户「我的素材」，支持 kind（text/image/video）过滤、keyword 搜索和 page/pageSize 分页。为控制体积不返回图片/视频原始 data，仅返回封面与元信息。",
     assets_add: "向「我的素材」新增素材。kind=text 时用 content 传文本内容；kind=image 时用 imageUrl 传图片地址或 dataURL。可附带 title、tags、source、note。",
+    knowledge_list_sources: "列出本地知识库中已同步的工作区和画布知识源。",
+    knowledge_search: "全文检索本地知识库。query 是检索词，limit 必须由调用方明确指定。返回匹配文档 ID、来源、引用位置和命中行；需要完整内容时继续调用 knowledge_get_document。",
+    knowledge_get_document: "按 knowledge_search 返回的 documentId 读取完整知识文档及引用信息。",
 };

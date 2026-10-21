@@ -541,6 +541,9 @@ function toolHistorySummary(tool: string, item: unknown, input: unknown) {
     if (tool === "prompts_search") return `找到 ${numberValue(field(result, "total"))} 条提示词`;
     if (tool === "assets_list") return `共 ${numberValue(field(result, "total"))} 个资产`;
     if (tool === "assets_add") return "已加入我的素材";
+    if (tool === "knowledge_list_sources") return `共 ${arrayValue(result).length} 个知识源`;
+    if (tool === "knowledge_search") return `找到 ${arrayValue(result).length} 个知识文档`;
+    if (tool === "knowledge_get_document") return "已读取知识文档";
     if (tool === "generation_get_status") {
         const summary = field(result, "summary");
         return `共 ${numberValue(field(result, "total"))} 个任务，排队 ${numberValue(field(summary, "queued"))}，运行中 ${numberValue(field(summary, "running"))}，成功 ${numberValue(field(summary, "succeeded"))}，失败 ${numberValue(field(summary, "failed"))}`;
@@ -590,6 +593,8 @@ function parseToolResult(result: unknown) {
 function toolInputRows(tool: string, input: unknown) {
     if (tool === "site_navigate") return [textRow("目标页面", routeName(String(field(input, "path") || "/")))].filter(Boolean);
     if (tool === "prompts_search") return [textRow("搜索内容", field(input, "query"))].filter(Boolean);
+    if (tool === "knowledge_search") return [textRow("搜索内容", field(input, "query"))].filter(Boolean);
+    if (tool === "knowledge_get_document") return [textRow("文档 ID", field(input, "documentId"))].filter(Boolean);
     if (tool === "canvas_create_text_node") return [textRow("文本内容", field(input, "text"))].filter(Boolean);
     if (tool === "canvas_apply_ops") return [textRow("操作内容", summarizeCanvasOps(arrayValue(field(input, "ops"))))].filter(Boolean);
     if (tool === "canvas_create_attachment_nodes") return [textRow("图片数量", arrayValue(field(input, "attachmentIds")).length)].filter(Boolean);
@@ -691,6 +696,7 @@ function routeName(path: string) {
     if (path.startsWith("/video")) return "视频工作台";
     if (path.startsWith("/prompts")) return "提示词中心";
     if (path.startsWith("/assets")) return "我的素材";
+    if (path.startsWith("/knowledge")) return "知识库";
     if (path.startsWith("/config")) return "配置页面";
     return path;
 }
@@ -735,6 +741,9 @@ function toolName(name: string) {
     if (name === "prompts_search") return "搜索提示词";
     if (name === "assets_list") return "资产列表";
     if (name === "assets_add") return "添加资产";
+    if (name === "knowledge_list_sources") return "读取知识源";
+    if (name === "knowledge_search") return "检索知识库";
+    if (name === "knowledge_get_document") return "读取知识文档";
     if (name === "generation_get_status") return "生成任务状态";
     return name ? `调用工具：${name}` : "工具操作";
 }

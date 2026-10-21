@@ -18,7 +18,7 @@ const streamdownProps = () => ({
     linkSafety: { enabled: true, renderModal: (props: LinkSafetyModalProps) => <AgentLinkModal {...props} /> },
     lineNumbers: false,
     translations: {
-        close: tr("close"), copied: tr("copied"), copyCode: tr("copyCode"), copyLink: tr("copyLink"), externalLinkWarning: tr("externalWarning"), openExternalLink: tr("openExternal"), openLink: tr("continueOpen"),
+        close: tr("close"), copied: tr("copied"), copyCode: tr("copyCode"), copyLink: tr("copyLink"), copyTable: tr("copyTable"), copyTableAsCsv: tr("copyTableAsCsv"), copyTableAsMarkdown: tr("copyTableAsMarkdown"), copyTableAsTsv: tr("copyTableAsTsv"), externalLinkWarning: tr("externalWarning"), openExternalLink: tr("openExternal"), openLink: tr("continueOpen"), tableFormatCsv: tr("copyAsCsv"), tableFormatMarkdown: tr("copyAsMarkdown"), tableFormatTsv: tr("copyAsTsv"),
     },
 } as const);
 const streamdownAnimation = { duration: 20, stagger: 0, sep: "word" } as const;

@@ -473,6 +473,15 @@
     margin-bottom: 0;
 }
 
+.agent-streamdown [data-streamdown="table-wrapper"] > div:first-child > div > div {
+    min-width: max-content;
+}
+
+.agent-streamdown [data-streamdown="table-wrapper"] > div:first-child > div > div button {
+    white-space: nowrap;
+    overflow-wrap: normal;
+}
+
 .agent-streamdown [data-streamdown="code-block"] {
     position: relative;
     display: block;
