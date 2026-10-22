@@ -10,15 +10,28 @@ export type KnowledgeSource = {
 };
 export type KnowledgeSearchResult = {
     id: string;
+    chunkId: string;
     sourceId: string;
     sourceKind: KnowledgeSource["kind"];
     title: string;
     reference: string;
     updatedAt: string;
     excerpt: string;
+    startLine: number;
+    endLine: number;
     score: number;
+    retrievalMode: "keyword" | "hybrid";
+    keywordRank?: number;
+    vectorRank?: number;
     metadata?: Record<string, string>;
 };
+export type KnowledgeEmbeddingConfig = {
+    enabled: boolean;
+    baseUrl: string;
+    model: string;
+    hasApiKey: boolean;
+};
+export type KnowledgeEmbeddingInput = Pick<KnowledgeEmbeddingConfig, "enabled" | "baseUrl" | "model"> & { apiKey?: string };
 export type CanvasKnowledgeProject = {
     id: string;
     title: string;
@@ -28,6 +41,14 @@ export type CanvasKnowledgeProject = {
 
 export function fetchKnowledgeSources(endpoint: string, token: string) {
     return fetchAgentJson<{ ok?: boolean; data: KnowledgeSource[] }>(endpoint, token, "/agent/knowledge/sources");
+}
+
+export function fetchKnowledgeEmbedding(endpoint: string, token: string) {
+    return fetchAgentJson<{ ok?: boolean; data: KnowledgeEmbeddingConfig }>(endpoint, token, "/agent/knowledge/embedding");
+}
+
+export function saveKnowledgeEmbedding(endpoint: string, token: string, input: KnowledgeEmbeddingInput) {
+    return fetchAgentJson<{ ok?: boolean; data: KnowledgeEmbeddingConfig }>(endpoint, token, "/agent/knowledge/embedding", jsonPost(input));
 }
 
 export function scanWorkspaceKnowledge(endpoint: string, token: string) {

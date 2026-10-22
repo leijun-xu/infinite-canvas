@@ -168,6 +168,6 @@ export const toolDescriptions: Record<ToolName, string> = {
     assets_list: "列出用户「我的素材」，支持 kind（text/image/video）过滤、keyword 搜索和 page/pageSize 分页。为控制体积不返回图片/视频原始 data，仅返回封面与元信息。",
     assets_add: "向「我的素材」新增素材。kind=text 时用 content 传文本内容；kind=image 时用 imageUrl 传图片地址或 dataURL。可附带 title、tags、source、note。",
     knowledge_list_sources: "列出本地知识库中已同步的工作区和画布知识源。",
-    knowledge_search: "全文检索本地知识库。query 是检索词，limit 必须由调用方明确指定。返回匹配文档 ID、来源、引用位置和命中行；需要完整内容时继续调用 knowledge_get_document。",
+    knowledge_search: "按 Chunk 对本地知识库执行关键词与语义混合检索。query 是检索词，limit 必须由调用方明确指定。返回匹配文档 ID、Chunk 行号、来源和摘要；未配置或无法调用 Embedding 时自动使用关键词检索，需要完整内容时继续调用 knowledge_get_document。",
     knowledge_get_document: "按 knowledge_search 返回的 documentId 读取完整知识文档及引用信息。",
 };

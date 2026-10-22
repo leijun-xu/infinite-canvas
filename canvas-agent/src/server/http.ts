@@ -9,7 +9,7 @@ import type { CodexReasoningEffort, CodexSkillSelector } from "../agent/codex-pr
 import { messageMetadataStore } from "../agent/message-metadata.js";
 import type { AgentAttachment, AgentPermissionMode } from "../agent/types.js";
 import { AGENT_PROTOCOL_VERSION, CanvasSession } from "../canvas/session.js";
-import { DEFAULT_PORT, ensureSiteWorkspace, loadConfig, saveConfig, updateSiteWorkspace, type CanvasAgentConfig } from "../config.js";
+import { DEFAULT_KNOWLEDGE_EMBEDDING, DEFAULT_PORT, ensureSiteWorkspace, loadConfig, saveConfig, updateSiteWorkspace, type CanvasAgentConfig, type KnowledgeEmbeddingConfig } from "../config.js";
 import { canvasKnowledgeInputSchema, KnowledgeStore } from "../knowledge/store.js";
 import { logger } from "../utils/logger.js";
 import { checkVersions } from "../version-check.js";
@@ -25,7 +25,7 @@ export function startHttpServer() {
     const initialWorkspace = ensureSiteWorkspace(config);
     const session = new CanvasSession(initialWorkspace.activeThreadId || "");
     const skillStore = new SkillStore(initialWorkspace.workspacePath);
-    const knowledgeStore = new KnowledgeStore();
+    const knowledgeStore = new KnowledgeStore(() => config.knowledgeEmbedding);
     const knowledgeReady = knowledgeStore.initialize();
     /** 将 Agent 事件广播到所属线程或全部网页。 */
     const emit = (type: string, payload: unknown) => {
@@ -192,7 +192,7 @@ export function startHttpServer() {
         const name = String(req.body?.name || "");
         const input = req.body?.input || {};
         if (name === "knowledge_list_sources") return void res.json({ ok: true, result: knowledgeStore.listSources() });
-        if (name === "knowledge_search") return void res.json({ ok: true, result: knowledgeStore.search(String(input.query || ""), positiveInteger(input.limit, "limit")) });
+        if (name === "knowledge_search") return void res.json({ ok: true, result: await knowledgeStore.search(String(input.query || ""), positiveInteger(input.limit, "limit")) });
         if (name === "knowledge_get_document") return void res.json({ ok: true, result: knowledgeStore.getDocument(String(input.documentId || "")) });
         res.json({ ok: true, result: await session.callTool(name, input) });
     }));
@@ -200,6 +200,19 @@ export function startHttpServer() {
     app.get("/agent/knowledge/sources", route(async (_req, res) => {
         await knowledgeReady;
         res.json({ ok: true, data: knowledgeStore.listSources() });
+    }));
+    /** 返回知识库 Embedding 的公开配置，不向网页回传 API Key。 */
+    app.get("/agent/knowledge/embedding", route(async (_req, res) => {
+        const embedding = config.knowledgeEmbedding || DEFAULT_KNOWLEDGE_EMBEDDING;
+        res.json({ ok: true, data: { enabled: embedding.enabled, baseUrl: embedding.baseUrl, model: embedding.model, hasApiKey: Boolean(embedding.apiKey) } });
+    }));
+    /** 保存 OpenAI-compatible Embedding 配置；未提交 apiKey 时保留原值。 */
+    app.post("/agent/knowledge/embedding", route(async (req, res) => {
+        const current = config.knowledgeEmbedding || DEFAULT_KNOWLEDGE_EMBEDDING;
+        const embedding = knowledgeEmbeddingConfig(req.body, current);
+        config.knowledgeEmbedding = embedding;
+        saveConfig(config);
+        res.json({ ok: true, data: { enabled: embedding.enabled, baseUrl: embedding.baseUrl, model: embedding.model, hasApiKey: Boolean(embedding.apiKey) } });
     }));
     /** 重新扫描当前 Agent 工作空间中的文本文件。 */
     app.post("/agent/knowledge/workspace/scan", route(async (_req, res) => {
@@ -216,7 +229,7 @@ export function startHttpServer() {
     /** 搜索本地知识库，主要供知识库管理页面预览检索效果。 */
     app.post("/agent/knowledge/search", route(async (req, res) => {
         await knowledgeReady;
-        res.json({ ok: true, data: knowledgeStore.search(String(req.body?.query || "")) });
+        res.json({ ok: true, data: await knowledgeStore.search(String(req.body?.query || "")) });
     }));
     /** 删除指定知识源及其全部文档。 */
     app.delete("/agent/knowledge/sources/:sourceId", route(async (req, res) => {
@@ -556,6 +569,24 @@ function positiveInteger(value: unknown, name: string) {
     const number = Number(value);
     if (!Number.isInteger(number) || number <= 0) throw new Error(`${name} 必须是正整数`);
     return number;
+}
+
+function knowledgeEmbeddingConfig(value: unknown, current: KnowledgeEmbeddingConfig): KnowledgeEmbeddingConfig {
+    const input = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+    const enabled = input.enabled === true;
+    const baseUrl = String(input.baseUrl || "").trim().replace(/\/+$/, "");
+    const model = String(input.model || "").trim();
+    const apiKey = input.apiKey === undefined ? current.apiKey : String(input.apiKey || "").trim();
+    let url: URL;
+    try {
+        url = new URL(baseUrl);
+    } catch {
+        throw new Error("Embedding Base URL 无效");
+    }
+    if (!["http:", "https:"].includes(url.protocol)) throw new Error("Embedding Base URL 仅支持 HTTP 或 HTTPS");
+    if (!model) throw new Error("Embedding 模型不能为空");
+    if (enabled && !apiKey) throw new Error("启用 Embedding 前需要填写 API Key");
+    return { enabled, baseUrl, model, apiKey };
 }
 
 function permissionMode(value: unknown): AgentPermissionMode {

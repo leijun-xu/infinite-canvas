@@ -8,10 +8,17 @@ export const CONFIG_DIR = path.join(os.homedir(), ".infinite-canvas");
 export const CONFIG_FILE = path.join(CONFIG_DIR, "canvas-agent.json");
 export const VERSION = readPackageVersion();
 export const AGENT_PROMPT = fs.readFileSync(new URL("../agent-instructions.md", import.meta.url), "utf8");
+export const DEFAULT_KNOWLEDGE_EMBEDDING = {
+    enabled: false,
+    baseUrl: "https://api.siliconflow.cn/v1",
+    model: "BAAI/bge-m3",
+    apiKey: "",
+} satisfies KnowledgeEmbeddingConfig;
 const initializedWorkspaces = new Set<string>();
 
 export type SiteWorkspaceConfig = { workspacePath: string; activeThreadId?: string; pinnedThreadIds?: string[] };
-export type CanvasAgentConfig = { url: string; token: string; origins?: string[]; workspace?: SiteWorkspaceConfig };
+export type KnowledgeEmbeddingConfig = { enabled: boolean; baseUrl: string; model: string; apiKey: string };
+export type CanvasAgentConfig = { url: string; token: string; origins?: string[]; workspace?: SiteWorkspaceConfig; knowledgeEmbedding?: KnowledgeEmbeddingConfig };
 
 /** 读取本地 Canvas Agent 配置，不存在时生成默认配置。 */
 export function loadConfig(create = false): CanvasAgentConfig {
