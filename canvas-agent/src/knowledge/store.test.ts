@@ -21,6 +21,29 @@ function project(documents: Array<{ id: string; content: string }>) {
     }];
 }
 
+test("只扫描工作空间的 knowledge 目录并在缺失时创建", async (context) => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "canvas-agent-workspace-"));
+    const knowledgeFile = path.join(workspace, ".index", "knowledge-v2.json");
+    context.after(() => fs.rm(workspace, { recursive: true, force: true }));
+    await fs.writeFile(path.join(workspace, "outside.md"), "不应进入知识库");
+    const store = new KnowledgeStore(() => undefined, knowledgeFile);
+
+    const emptySource = await store.scanWorkspace(workspace);
+    assert.equal(emptySource.reference, path.join(workspace, "knowledge"));
+    assert.equal(emptySource.documentCount, 0);
+    assert.ok((await fs.stat(emptySource.reference)).isDirectory());
+
+    await fs.mkdir(path.join(workspace, "knowledge", "guides"));
+    await fs.writeFile(path.join(workspace, "knowledge", "guides", "intro.md"), "知识目录正文");
+    const source = await store.scanWorkspace(workspace);
+    assert.equal(source.title, "knowledge");
+    assert.equal(source.documentCount, 1);
+
+    const persisted = JSON.parse(await fs.readFile(knowledgeFile, "utf8")) as KnowledgeData;
+    assert.deepEqual(persisted.documents.map((document) => document.title), [path.join("guides", "intro.md")]);
+    assert.equal(persisted.documents[0].content, "知识目录正文");
+});
+
 test("向量持久化后同模型增量复用，切换模型时全量重建", async (context) => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "canvas-agent-knowledge-"));
     const knowledgeFile = path.join(directory, "knowledge-v2.json");

@@ -214,7 +214,7 @@ export function startHttpServer() {
         saveConfig(config);
         res.json({ ok: true, data: { enabled: embedding.enabled, baseUrl: embedding.baseUrl, model: embedding.model, hasApiKey: Boolean(embedding.apiKey) } });
     }));
-    /** 重新扫描当前 Agent 工作空间中的文本文件。 */
+    /** 重新扫描当前 Agent 工作空间 knowledge 目录中的文本文件。 */
     app.post("/agent/knowledge/workspace/scan", route(async (_req, res) => {
         await knowledgeReady;
         const source = await knowledgeStore.scanWorkspace(ensureSiteWorkspace(config).workspacePath);

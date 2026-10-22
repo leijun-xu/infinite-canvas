@@ -64,7 +64,7 @@ export const canvasKnowledgeInputSchema = z.array(
 type CanvasKnowledgeInput = z.infer<typeof canvasKnowledgeInputSchema>[number];
 
 const KNOWLEDGE_FILE = path.join(CONFIG_DIR, "knowledge-v2.json");
-const ignoredDirectories = new Set([".agents", ".git", ".next", "build", "coverage", "dist", "node_modules"]);
+const ignoredDirectories = new Set([".agents", ".git", ".infinite-canvas", ".next", "build", "coverage", "dist", "node_modules"]);
 const indexedExtensions = new Set([".css", ".html", ".js", ".jsx", ".less", ".md", ".mdx", ".ts", ".tsx", ".txt"]);
 
 /** 管理 Canvas Agent 的本地知识文档、Chunk 与混合检索索引。 */
@@ -110,8 +110,9 @@ export class KnowledgeStore {
 
     async scanWorkspace(workspacePath: string) {
         this.assertHealthy();
-        const root = path.resolve(workspacePath);
-        const files = await collectWorkspaceFiles(root);
+        const root = path.join(path.resolve(workspacePath), "knowledge");
+        await fs.mkdir(root, { recursive: true });
+        const files = await collectKnowledgeFiles(root);
         const sourceId = `workspace:${digest(root)}`;
         const documents = await Promise.all(
             files.map(async (filePath) => {
@@ -229,7 +230,7 @@ export class KnowledgeStore {
     }
 }
 
-async function collectWorkspaceFiles(root: string) {
+async function collectKnowledgeFiles(root: string) {
     const files: string[] = [];
     const entries = await fs.readdir(root, { withFileTypes: true });
     await Promise.all(
@@ -237,7 +238,7 @@ async function collectWorkspaceFiles(root: string) {
             if (entry.isSymbolicLink()) return;
             const filePath = path.join(root, entry.name);
             if (entry.isDirectory()) {
-                if (!ignoredDirectories.has(entry.name)) files.push(...(await collectWorkspaceFiles(filePath)));
+                if (!ignoredDirectories.has(entry.name)) files.push(...(await collectKnowledgeFiles(filePath)));
                 return;
             }
             if (entry.isFile() && indexedExtensions.has(path.extname(entry.name).toLowerCase()) && !entry.name.endsWith(".min.js")) files.push(filePath);
