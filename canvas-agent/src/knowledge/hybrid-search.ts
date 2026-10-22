@@ -1,7 +1,6 @@
-import MiniSearch from "minisearch";
-
 import type { KnowledgeEmbeddingConfig } from "../config.js";
 import { activeEmbeddingConfig, decodeVector, embedTexts, QUERY_EMBEDDING_TIMEOUT_MS } from "./embedding-provider.js";
+import { tokenizeText } from "./tokenizer.js";
 import type { EmbeddingProfile, KnowledgeChunk, KnowledgeSearchResult } from "./types.js";
 
 export const KEYWORD_CANDIDATE_LIMIT = 30;
@@ -9,18 +8,16 @@ export const VECTOR_CANDIDATE_LIMIT = 30;
 export const RRF_CONSTANT = 60;
 export const DEFAULT_SEARCH_LIMIT = 20;
 
-const segmenter = new Intl.Segmenter(undefined, { granularity: "word" });
+type VectorCandidate = { id: string; score: number };
+type VectorSearch = (vector: number[]) => VectorCandidate[] | undefined;
 
-/** 在内存中维护 Chunk 级关键词与向量索引。 */
+/** 在内存中维护 Chunk 与向量，合并数据库关键词候选和向量候选。 */
 export class KnowledgeSearchIndex {
     private chunks = new Map<string, KnowledgeChunk>();
-    private lexical = createLexicalIndex();
     private vectors = new Map<string, number[]>();
 
     rebuild(chunks: KnowledgeChunk[], dimensions?: number) {
         this.chunks = new Map(chunks.map((chunk) => [chunk.id, chunk]));
-        this.lexical = createLexicalIndex();
-        this.lexical.addAll(chunks);
         this.vectors = new Map(chunks.flatMap((chunk) => {
             if (!chunk.embedding) return [];
             const vector = decodeVector(chunk.embedding);
@@ -28,18 +25,23 @@ export class KnowledgeSearchIndex {
         }));
     }
 
-    async search(query: string, limit: number | undefined, config: KnowledgeEmbeddingConfig | undefined, profile?: EmbeddingProfile) {
+    async search(query: string, keyword: Array<{ id: string }>, limit: number | undefined, config: KnowledgeEmbeddingConfig | undefined, profile?: EmbeddingProfile, searchVectors?: VectorSearch) {
         const text = query.trim();
         if (!text) return [];
-        const keyword = this.lexical.search(text, { combineWith: "AND", prefix: true }).slice(0, KEYWORD_CANDIDATE_LIMIT);
-        let vector: Array<{ id: string; score: number }> = [];
+        let vector: VectorCandidate[] = [];
         const active = activeEmbeddingConfig(config);
         if (config && active && profile && active.baseUrl === profile.baseUrl && active.model === profile.model && this.vectors.size) {
             try {
                 const [queryVector] = await embedTexts(config, [text], QUERY_EMBEDDING_TIMEOUT_MS);
-                vector = [...this.vectors].map(([id, embedding]) => ({ id, score: dotProduct(queryVector, embedding) }))
+                if (queryVector.length !== profile.dimensions) throw new Error("查询向量维度与知识库不一致");
+                vector = searchVectors?.(queryVector) ?? [...this.vectors]
+                    .flatMap(([id, embedding]) => {
+                        const score = dotProduct(queryVector, embedding);
+                        return Number.isFinite(score) ? [{ id, score }] : [];
+                    })
                     .sort((left, right) => right.score - left.score)
                     .slice(0, VECTOR_CANDIDATE_LIMIT);
+                vector = vector.filter((item) => Number.isFinite(item.score));
             } catch {
                 vector = [];
             }
@@ -72,17 +74,6 @@ export class KnowledgeSearchIndex {
                 }];
             });
     }
-}
-
-export function tokenizeText(text: string) {
-    return [...segmenter.segment(text)].filter((item) => item.isWordLike).map((item) => item.segment.toLocaleLowerCase());
-}
-
-function createLexicalIndex() {
-    return new MiniSearch<KnowledgeChunk>({
-        fields: ["title", "content", "reference"],
-        tokenize: tokenizeText,
-    });
 }
 
 function addRank(ranks: Map<string, { keywordRank?: number; vectorRank?: number; score: number }>, id: string, key: "keywordRank" | "vectorRank", rank: number) {

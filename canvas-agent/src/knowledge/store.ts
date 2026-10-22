@@ -4,10 +4,11 @@ import path from "node:path";
 
 import { z } from "zod";
 
-import { CONFIG_DIR, type KnowledgeEmbeddingConfig } from "../config.js";
+import type { KnowledgeEmbeddingConfig } from "../config.js";
 import { chunkDocument } from "./chunker.js";
+import { KnowledgeDatabase, knowledgeDatabasePath } from "./database.js";
 import { activeEmbeddingConfig, embedTexts, encodeVector, SYNC_EMBEDDING_TIMEOUT_MS } from "./embedding-provider.js";
-import { KnowledgeSearchIndex } from "./hybrid-search.js";
+import { KEYWORD_CANDIDATE_LIMIT, KnowledgeSearchIndex, VECTOR_CANDIDATE_LIMIT } from "./hybrid-search.js";
 import type { EmbeddingProfile, KnowledgeData, KnowledgeDocument, KnowledgeSource, KnowledgeSourceKind } from "./types.js";
 
 export type { KnowledgeDocument, KnowledgeSearchResult, KnowledgeSource, KnowledgeSourceKind } from "./types.js";
@@ -63,7 +64,6 @@ export const canvasKnowledgeInputSchema = z.array(
 );
 type CanvasKnowledgeInput = z.infer<typeof canvasKnowledgeInputSchema>[number];
 
-const KNOWLEDGE_FILE = path.join(CONFIG_DIR, "knowledge-v2.json");
 const ignoredDirectories = new Set([".agents", ".git", ".infinite-canvas", ".next", "build", "coverage", "dist", "node_modules"]);
 const indexedExtensions = new Set([".css", ".html", ".js", ".jsx", ".less", ".md", ".mdx", ".ts", ".tsx", ".txt"]);
 
@@ -74,19 +74,27 @@ export class KnowledgeStore {
     private index = new KnowledgeSearchIndex();
     private initializationError: Error | null = null;
     private mutation = Promise.resolve();
+    private database: KnowledgeDatabase | null = null;
+    private readonly workspacePath: string;
+    private readonly databasePath: string;
 
     constructor(
+        workspacePath: string,
         private readonly embeddingConfig: () => KnowledgeEmbeddingConfig | undefined = () => undefined,
-        private readonly knowledgeFile = KNOWLEDGE_FILE,
-    ) {}
+        databasePath = knowledgeDatabasePath(workspacePath),
+    ) {
+        this.workspacePath = path.resolve(workspacePath);
+        this.databasePath = databasePath;
+    }
 
     async initialize() {
         try {
-            const raw = await fs.readFile(this.knowledgeFile, "utf8");
-            this.data = knowledgeDataSchema.parse(JSON.parse(raw));
+            this.database = new KnowledgeDatabase(this.databasePath, this.workspacePath);
+            this.data = knowledgeDataSchema.parse(this.database.read());
             this.rebuild();
         } catch (error) {
-            if (isMissingFile(error)) return;
+            this.database?.close();
+            this.database = null;
             this.initializationError = error instanceof Error ? error : new Error(String(error));
         }
     }
@@ -105,15 +113,17 @@ export class KnowledgeStore {
 
     search(query: string, limit?: number) {
         this.assertHealthy();
-        return this.index.search(query, limit, this.embeddingConfig(), this.data.embeddingProfile);
+        if (!this.database) throw new Error("知识数据库尚未初始化");
+        const keyword = this.database.searchKeywords(query, KEYWORD_CANDIDATE_LIMIT);
+        return this.index.search(query, keyword, limit, this.embeddingConfig(), this.data.embeddingProfile, (vector) => this.database?.searchVectors(vector, VECTOR_CANDIDATE_LIMIT));
     }
 
-    async scanWorkspace(workspacePath: string) {
+    async scanWorkspace() {
         this.assertHealthy();
-        const root = path.join(path.resolve(workspacePath), "knowledge");
+        const root = path.join(this.workspacePath, "knowledge");
         await fs.mkdir(root, { recursive: true });
         const files = await collectKnowledgeFiles(root);
-        const sourceId = `workspace:${digest(root)}`;
+        const sourceId = `workspace:${digest("knowledge")}`;
         const documents = await Promise.all(
             files.map(async (filePath) => {
                 const relativePath = path.relative(root, filePath);
@@ -217,12 +227,13 @@ export class KnowledgeStore {
     }
 
     private async persist(data: KnowledgeData) {
-        const directory = path.dirname(this.knowledgeFile);
-        await fs.mkdir(directory, { recursive: true, mode: 0o700 });
-        const temporaryFile = `${this.knowledgeFile}.${process.pid}.${crypto.randomUUID()}.tmp`;
-        await fs.writeFile(temporaryFile, JSON.stringify(data), { mode: 0o600 });
-        await fs.chmod(temporaryFile, 0o600);
-        await fs.rename(temporaryFile, this.knowledgeFile);
+        if (!this.database) throw new Error("知识数据库尚未初始化");
+        this.database.write(data);
+    }
+
+    close() {
+        this.database?.close();
+        this.database = null;
     }
 
     private assertHealthy() {
@@ -253,8 +264,4 @@ function documentId(sourceId: string, reference: string) {
 
 function digest(value: string) {
     return crypto.createHash("sha256").update(value).digest("hex");
-}
-
-function isMissingFile(error: unknown): error is NodeJS.ErrnoException {
-    return error instanceof Error && "code" in error && error.code === "ENOENT";
 }

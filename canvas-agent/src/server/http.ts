@@ -25,8 +25,9 @@ export function startHttpServer() {
     const initialWorkspace = ensureSiteWorkspace(config);
     const session = new CanvasSession(initialWorkspace.activeThreadId || "");
     const skillStore = new SkillStore(initialWorkspace.workspacePath);
-    const knowledgeStore = new KnowledgeStore(() => config.knowledgeEmbedding);
+    const knowledgeStore = new KnowledgeStore(initialWorkspace.workspacePath, () => config.knowledgeEmbedding);
     const knowledgeReady = knowledgeStore.initialize();
+    process.once("exit", () => knowledgeStore.close());
     /** 将 Agent 事件广播到所属线程或全部网页。 */
     const emit = (type: string, payload: unknown) => {
         const value = payload && typeof payload === "object" && !Array.isArray(payload) ? payload as Record<string, unknown> : { value: payload };
@@ -217,7 +218,7 @@ export function startHttpServer() {
     /** 重新扫描当前 Agent 工作空间 knowledge 目录中的文本文件。 */
     app.post("/agent/knowledge/workspace/scan", route(async (_req, res) => {
         await knowledgeReady;
-        const source = await knowledgeStore.scanWorkspace(ensureSiteWorkspace(config).workspacePath);
+        const source = await knowledgeStore.scanWorkspace();
         res.json({ ok: true, data: source });
     }));
     /** 用浏览器本地画布中的文本内容替换画布知识源。 */

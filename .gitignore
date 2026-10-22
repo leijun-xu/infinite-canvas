@@ -9,6 +9,8 @@ data/
 .DS_Store
 .idea
 .dbg/
+.infinite-canvas/knowledge.sqlite-shm
+.infinite-canvas/knowledge.sqlite-wal
 web/dist
 
 **/dist
