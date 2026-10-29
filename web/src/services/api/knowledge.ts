@@ -21,6 +21,8 @@ export type KnowledgeSearchResult = {
     endLine: number;
     score: number;
     retrievalMode: "keyword" | "hybrid";
+    rerankStatus?: "success" | "fallback";
+    rerankScore?: number;
     keywordRank?: number;
     vectorRank?: number;
     metadata?: Record<string, string>;
@@ -32,6 +34,7 @@ export type KnowledgeEmbeddingConfig = {
     hasApiKey: boolean;
 };
 export type KnowledgeEmbeddingInput = Pick<KnowledgeEmbeddingConfig, "enabled" | "baseUrl" | "model"> & { apiKey?: string };
+export type KnowledgeRerankConfig = { enabled: boolean; model: string; timeoutSeconds?: number };
 export type CanvasKnowledgeProject = {
     id: string;
     title: string;
@@ -53,6 +56,14 @@ export function saveKnowledgeEmbedding(endpoint: string, token: string, input: K
 
 export function scanWorkspaceKnowledge(endpoint: string, token: string) {
     return fetchAgentJson<{ ok?: boolean; data: KnowledgeSource }>(endpoint, token, "/agent/knowledge/workspace/scan", jsonPost({}));
+}
+
+export function fetchKnowledgeRerank(endpoint: string, token: string) {
+    return fetchAgentJson<{ ok?: boolean; data: KnowledgeRerankConfig }>(endpoint, token, "/agent/knowledge/rerank");
+}
+
+export function saveKnowledgeRerank(endpoint: string, token: string, input: KnowledgeRerankConfig) {
+    return fetchAgentJson<{ ok?: boolean; data: KnowledgeRerankConfig }>(endpoint, token, "/agent/knowledge/rerank", jsonPost(input));
 }
 
 export function syncCanvasKnowledge(endpoint: string, token: string, projects: CanvasKnowledgeProject[]) {

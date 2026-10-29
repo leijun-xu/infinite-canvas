@@ -57,6 +57,8 @@ export type KnowledgeSearchResult = Pick<KnowledgeDocument, "id" | "sourceId" | 
     endLine: number;
     score: number;
     retrievalMode: "keyword" | "hybrid";
+    rerankStatus?: "success" | "fallback";
+    rerankScore?: number;
     keywordRank?: number;
     vectorRank?: number;
 };

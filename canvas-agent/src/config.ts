@@ -14,11 +14,13 @@ export const DEFAULT_KNOWLEDGE_EMBEDDING = {
     model: "BAAI/bge-m3",
     apiKey: "",
 } satisfies KnowledgeEmbeddingConfig;
+export const DEFAULT_KNOWLEDGE_RERANK: KnowledgeRerankConfig = { enabled: false, model: "Qwen/Qwen3-Reranker-0.6B" };
 const initializedWorkspaces = new Set<string>();
 
 export type SiteWorkspaceConfig = { workspacePath: string; activeThreadId?: string; pinnedThreadIds?: string[] };
 export type KnowledgeEmbeddingConfig = { enabled: boolean; baseUrl: string; model: string; apiKey: string };
-export type CanvasAgentConfig = { url: string; token: string; origins?: string[]; workspace?: SiteWorkspaceConfig; knowledgeEmbedding?: KnowledgeEmbeddingConfig };
+export type KnowledgeRerankConfig = { enabled: boolean; model: string; timeoutSeconds?: number };
+export type CanvasAgentConfig = { url: string; token: string; origins?: string[]; workspace?: SiteWorkspaceConfig; knowledgeEmbedding?: KnowledgeEmbeddingConfig; knowledgeRerank?: KnowledgeRerankConfig };
 
 /** 读取本地 Canvas Agent 配置，不存在时生成默认配置。 */
 export function loadConfig(create = false): CanvasAgentConfig {

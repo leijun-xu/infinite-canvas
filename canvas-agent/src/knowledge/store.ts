@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { z } from "zod";
 
-import type { KnowledgeEmbeddingConfig } from "../config.js";
+import type { KnowledgeEmbeddingConfig, KnowledgeRerankConfig } from "../config.js";
 import { chunkDocument } from "./chunker.js";
 import { KnowledgeDatabase, knowledgeDatabasePath } from "./database.js";
 import { activeEmbeddingConfig, embedTexts, encodeVector, SYNC_EMBEDDING_TIMEOUT_MS } from "./embedding-provider.js";
@@ -82,6 +82,7 @@ export class KnowledgeStore {
         workspacePath: string,
         private readonly embeddingConfig: () => KnowledgeEmbeddingConfig | undefined = () => undefined,
         databasePath = knowledgeDatabasePath(workspacePath),
+        private readonly rerankConfig: () => KnowledgeRerankConfig | undefined = () => undefined,
     ) {
         this.workspacePath = path.resolve(workspacePath);
         this.databasePath = databasePath;
@@ -115,7 +116,7 @@ export class KnowledgeStore {
         this.assertHealthy();
         if (!this.database) throw new Error("知识数据库尚未初始化");
         const keyword = this.database.searchKeywords(query, KEYWORD_CANDIDATE_LIMIT);
-        return this.index.search(query, keyword, limit, this.embeddingConfig(), this.data.embeddingProfile, (vector) => this.database?.searchVectors(vector, VECTOR_CANDIDATE_LIMIT));
+        return this.index.search(query, keyword, limit, this.embeddingConfig(), this.data.embeddingProfile, (vector) => this.database?.searchVectors(vector, VECTOR_CANDIDATE_LIMIT), this.rerankConfig());
     }
 
     async scanWorkspace() {

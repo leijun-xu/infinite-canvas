@@ -1,5 +1,6 @@
-import type { KnowledgeEmbeddingConfig } from "../config.js";
+import type { KnowledgeEmbeddingConfig, KnowledgeRerankConfig } from "../config.js";
 import { activeEmbeddingConfig, decodeVector, embedTexts, QUERY_EMBEDDING_TIMEOUT_MS } from "./embedding-provider.js";
+import { rerankTexts } from "./rerank-provider.js";
 import { tokenizeText } from "./tokenizer.js";
 import type { EmbeddingProfile, KnowledgeChunk, KnowledgeSearchResult } from "./types.js";
 
@@ -25,7 +26,7 @@ export class KnowledgeSearchIndex {
         }));
     }
 
-    async search(query: string, keyword: Array<{ id: string }>, limit: number | undefined, config: KnowledgeEmbeddingConfig | undefined, profile?: EmbeddingProfile, searchVectors?: VectorSearch) {
+    async search(query: string, keyword: Array<{ id: string }>, limit: number | undefined, config: KnowledgeEmbeddingConfig | undefined, profile?: EmbeddingProfile, searchVectors?: VectorSearch, rerankConfig?: KnowledgeRerankConfig) {
         const text = query.trim();
         if (!text) return [];
         let vector: VectorCandidate[] = [];
@@ -50,9 +51,27 @@ export class KnowledgeSearchIndex {
         keyword.forEach((item, index) => addRank(ranks, String(item.id), "keywordRank", index + 1));
         vector.forEach((item, index) => addRank(ranks, item.id, "vectorRank", index + 1));
         const retrievalMode = vector.length ? "hybrid" as const : "keyword" as const;
-        return [...ranks].sort((left, right) => right[1].score - left[1].score)
-            .slice(0, limit || DEFAULT_SEARCH_LIMIT)
-            .flatMap<KnowledgeSearchResult>(([chunkId, rank]) => {
+        const candidates = [...ranks].sort((left, right) => right[1].score - left[1].score)
+            .filter(([chunkId]) => this.chunks.has(chunkId));
+        let order = candidates.map((_, index) => index);
+        let rerankStatus: KnowledgeSearchResult["rerankStatus"];
+        const rerankScores = new Map<number, number>();
+        if (rerankConfig?.enabled && candidates.length) {
+            try {
+                const documents = candidates.map(([chunkId]) => {
+                    const chunk = this.chunks.get(chunkId)!;
+                    return `${chunk.title}\n\n${chunk.content}`;
+                });
+                const reranked = await rerankTexts(rerankConfig, config, text, documents);
+                order = reranked.map((item) => item.index);
+                reranked.forEach((item) => rerankScores.set(item.index, item.relevance_score));
+                rerankStatus = "success";
+            } catch {
+                rerankStatus = "fallback";
+            }
+        }
+        return order.slice(0, limit || DEFAULT_SEARCH_LIMIT).map((index) => ({ candidate: candidates[index], rerankScore: rerankScores.get(index) }))
+            .flatMap<KnowledgeSearchResult>(({ candidate: [chunkId, rank], rerankScore }) => {
                 const chunk = this.chunks.get(chunkId);
                 if (!chunk) return [];
                 return [{
@@ -69,6 +88,8 @@ export class KnowledgeSearchIndex {
                     endLine: chunk.endLine,
                     score: rank.score,
                     retrievalMode,
+                    rerankStatus,
+                    rerankScore,
                     keywordRank: rank.keywordRank,
                     vectorRank: rank.vectorRank,
                 }];

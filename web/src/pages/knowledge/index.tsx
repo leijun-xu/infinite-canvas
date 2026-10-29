@@ -9,6 +9,7 @@ import { deleteKnowledgeSource, fetchKnowledgeEmbedding, fetchKnowledgeSources, 
 import { useAgentStore } from "@/stores/use-agent-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { CanvasNodeType } from "@/types/canvas";
+import { RerankConfig } from "./rerank-config";
 
 type EmbeddingFormValues = { enabled: boolean; baseUrl: string; model: string; apiKey?: string };
 
@@ -296,6 +297,8 @@ export default function KnowledgePage() {
                     </Form>
                 </section>
 
+                <RerankConfig />
+
                 <section className="border-t border-stone-200 py-7 dark:border-stone-800">
                     <div className="mb-3 flex items-center justify-between">
                         <h2 className="text-base font-medium">{t("knowledge.sources")}</h2>
@@ -331,6 +334,8 @@ export default function KnowledgePage() {
                                     <div className="flex flex-wrap items-center gap-2">
                                         <span className="font-medium">{result.title}</span>
                                         <Tag className="m-0">{t(`knowledge.retrievalModes.${result.retrievalMode}`)}</Tag>
+                                        {result.rerankStatus ? <Tag className="m-0" color={result.rerankStatus === "success" ? "success" : "warning"}>{t(`knowledge.rerankStatuses.${result.rerankStatus}`)}</Tag> : null}
+                                        {result.rerankScore !== undefined ? <span className="text-xs text-stone-500">{t("knowledge.rerankScore", { score: result.rerankScore.toFixed(3) })}</span> : null}
                                         <span className="text-xs text-stone-500">{t("knowledge.lines", { start: result.startLine, end: result.endLine })}</span>
                                     </div>
                                     <p className="mt-1 whitespace-pre-wrap text-sm text-stone-600 dark:text-stone-300">{result.excerpt || t("knowledge.noExcerpt")}</p>

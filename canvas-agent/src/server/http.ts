@@ -9,7 +9,8 @@ import type { CodexReasoningEffort, CodexSkillSelector } from "../agent/codex-pr
 import { messageMetadataStore } from "../agent/message-metadata.js";
 import type { AgentAttachment, AgentPermissionMode } from "../agent/types.js";
 import { AGENT_PROTOCOL_VERSION, CanvasSession } from "../canvas/session.js";
-import { DEFAULT_KNOWLEDGE_EMBEDDING, DEFAULT_PORT, ensureSiteWorkspace, loadConfig, saveConfig, updateSiteWorkspace, type CanvasAgentConfig, type KnowledgeEmbeddingConfig } from "../config.js";
+import { DEFAULT_KNOWLEDGE_EMBEDDING, DEFAULT_KNOWLEDGE_RERANK, DEFAULT_PORT, ensureSiteWorkspace, loadConfig, saveConfig, updateSiteWorkspace, type CanvasAgentConfig, type KnowledgeEmbeddingConfig, type KnowledgeRerankConfig } from "../config.js";
+import { validRerankTimeout } from "../knowledge/rerank-provider.js";
 import { canvasKnowledgeInputSchema, KnowledgeStore } from "../knowledge/store.js";
 import { logger } from "../utils/logger.js";
 import { checkVersions } from "../version-check.js";
@@ -25,7 +26,7 @@ export function startHttpServer() {
     const initialWorkspace = ensureSiteWorkspace(config);
     const session = new CanvasSession(initialWorkspace.activeThreadId || "");
     const skillStore = new SkillStore(initialWorkspace.workspacePath);
-    const knowledgeStore = new KnowledgeStore(initialWorkspace.workspacePath, () => config.knowledgeEmbedding);
+    const knowledgeStore = new KnowledgeStore(initialWorkspace.workspacePath, () => config.knowledgeEmbedding, undefined, () => config.knowledgeRerank);
     const knowledgeReady = knowledgeStore.initialize();
     process.once("exit", () => knowledgeStore.close());
     /** 将 Agent 事件广播到所属线程或全部网页。 */
@@ -214,6 +215,16 @@ export function startHttpServer() {
         config.knowledgeEmbedding = embedding;
         saveConfig(config);
         res.json({ ok: true, data: { enabled: embedding.enabled, baseUrl: embedding.baseUrl, model: embedding.model, hasApiKey: Boolean(embedding.apiKey) } });
+    }));
+    /** 精排复用 Embedding 连接，但不依赖向量检索开关。 */
+    app.get("/agent/knowledge/rerank", route(async (_req, res) => {
+        res.json({ ok: true, data: config.knowledgeRerank || DEFAULT_KNOWLEDGE_RERANK });
+    }));
+    app.post("/agent/knowledge/rerank", route(async (req, res) => {
+        const rerank = knowledgeRerankConfig(req.body, config.knowledgeEmbedding);
+        config.knowledgeRerank = rerank;
+        saveConfig(config);
+        res.json({ ok: true, data: rerank });
     }));
     /** 重新扫描当前 Agent 工作空间 knowledge 目录中的文本文件。 */
     app.post("/agent/knowledge/workspace/scan", route(async (_req, res) => {
@@ -588,6 +599,18 @@ function knowledgeEmbeddingConfig(value: unknown, current: KnowledgeEmbeddingCon
     if (!model) throw new Error("Embedding 模型不能为空");
     if (enabled && !apiKey) throw new Error("启用 Embedding 前需要填写 API Key");
     return { enabled, baseUrl, model, apiKey };
+}
+
+function knowledgeRerankConfig(value: unknown, connection?: KnowledgeEmbeddingConfig): KnowledgeRerankConfig {
+    const input = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+    const enabled = input.enabled === true;
+    const model = String(input.model || "").trim();
+    const timeoutSeconds = input.timeoutSeconds == null ? undefined : input.timeoutSeconds;
+    if (!model) throw new Error("Rerank 模型不能为空");
+    if (timeoutSeconds !== undefined && !validRerankTimeout(timeoutSeconds)) throw new Error("Rerank 超时必须是 Node 定时器支持的正数秒数");
+    if (enabled && timeoutSeconds === undefined) throw new Error("启用 Rerank 前请填写请求超时秒数");
+    if (enabled && !connection?.apiKey.trim()) throw new Error("启用 Rerank 前请先保存语义检索的 Base URL 和 API Key");
+    return { enabled, model, timeoutSeconds: timeoutSeconds as number | undefined };
 }
 
 function permissionMode(value: unknown): AgentPermissionMode {
